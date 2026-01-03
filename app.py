@@ -1,7 +1,7 @@
 import base64
 import streamlit as st
 
-from common import CATEGORY_FEEDS, collect_items, within_hours, host, item_id, pretty_dt
+from common import CATEGORY_FEEDS, collect_items, within_hours, host, item_id, pretty_dt, clear_feed_caches
 from style import inject_css
 
 APP_TITLE = "KbM Nieuws"
@@ -60,10 +60,10 @@ with st.sidebar:
     only_recent_hours = st.slider("🕒 Net binnen (max uren oud)", 1, 24, int(st.session_state.get("only_recent_hours", 4)), 1)
     st.session_state.only_recent_hours = only_recent_hours
 
-    auto_refresh = st.toggle("🔔 Auto refresh", value=bool(st.session_state.get("auto_refresh", False)))
+    auto_refresh = st.toggle("🔔 Auto refresh (RSS)", value=bool(st.session_state.get("auto_refresh", False)))
     st.session_state.auto_refresh = auto_refresh
 
-    interval_sec = st.select_slider("Interval", options=[15, 30, 60, 120, 300], value=int(st.session_state.get("refresh_interval", 60)))
+    interval_sec = st.select_slider("Interval", options=[30, 60, 120, 300], value=int(st.session_state.get("refresh_interval", 60)))
     st.session_state.refresh_interval = interval_sec
 
     st.divider()
@@ -75,7 +75,7 @@ with st.sidebar:
             st.session_state.bookmarks = []
             st.rerun()
     else:
-        st.caption("Nog leeg. Klik straks bij een bericht op ⭐.")
+        st.caption("Nog leeg. Klik bij een bericht op ⭐.")
 
 
 inject_css(st, dark=dark_mode)
@@ -95,7 +95,7 @@ st.markdown(
     <img src="data:image/png;base64,{logo_b64()}" />
     <div>
       <div class="kbm-title">KbM Nieuws</div>
-      <div class="kbm-sub">Streamlit editie • hero + thumbnails • weer + kaarten • lees later ⭐</div>
+      <div class="kbm-sub">Snel & luxe • AI alleen op artikelpagina (veel sneller) • lees later ⭐</div>
     </div>
   </div>
 </div>
@@ -107,10 +107,11 @@ leftc, rightc = st.columns([1.2, 0.8], gap="large")
 with leftc:
     query = st.text_input("Zoekterm (optioneel)", placeholder="bijv. Huizen, politiek, muziek…")
 with rightc:
-    force_fetch = st.toggle("Samenvatting uitbreiden (artikel ophalen)", value=True)
-    if st.button("🔁 Ververs nu", use_container_width=True):
-        st.cache_data.clear()
+    if st.button("🔁 Ververs nu (RSS)", use_container_width=True):
+        clear_feed_caches()
         st.rerun()
+
+st.caption("Tip: AI-samenvattingen draaien automatisch op de **Artikel**-pagina. Home blijft dus supersnel ⚡")
 
 
 def add_bookmark(it: dict):
@@ -145,13 +146,9 @@ def render_item_expander(it: dict, compact: bool = False):
     if it.get("img") and not compact:
         st.image(it["img"], use_container_width=True)
 
-    if it.get("summary"):
-        st.markdown("**KbM-samenvatting:**")
-        st.write(it["summary"])
-
-    if it.get("excerpt"):
-        st.markdown("**Korte preview:**")
-        st.write(it["excerpt"])
+    if it.get("rss_summary"):
+        st.markdown("**Korte preview (RSS):**")
+        st.write(it["rss_summary"])
 
     st.markdown(f"[Open origineel artikel]({it.get('link','')})")
 
@@ -162,7 +159,8 @@ def render_section(cat_name: str, hours_limit: int | None):
         feed_labels,
         query=(query or None),
         max_per_feed=25,
-        force_fetch=force_fetch,
+        force_fetch=False,
+        ai_on=False,
     )
 
     if hours_limit is not None:
@@ -190,7 +188,7 @@ def render_section(cat_name: str, hours_limit: int | None):
             st.image(hero["img"], use_container_width=True)
         st.markdown(f"#### {hero['title']}")
         st.markdown(f"<div class='kbm-meta'>{host(hero['link'])} • {pretty_dt(hero.get('dt'))}</div>", unsafe_allow_html=True)
-        with st.expander("Lees (KbM) — openklappen", expanded=False):
+        with st.expander("Lees preview", expanded=False):
             render_item_expander(hero, compact=True)
 
     with colB:
@@ -213,7 +211,7 @@ def render_section(cat_name: str, hours_limit: int | None):
                 """,
                 unsafe_allow_html=True,
             )
-            with st.expander("Lees meer", expanded=False):
+            with st.expander("Lees preview", expanded=False):
                 render_item_expander(t, compact=True)
         st.markdown("</div>", unsafe_allow_html=True)
 
@@ -223,7 +221,7 @@ def render_section(cat_name: str, hours_limit: int | None):
 
     st.markdown("</div>", unsafe_allow_html=True)
 
-    for it in items[:20]:
+    for it in items[:30]:
         st.session_state.seen_ids.add(it["id"])
 
 
@@ -234,17 +232,14 @@ render_section("Net binnen", hours_limit=hrs)
 
 st.markdown("## Categorieën")
 g1, g2 = st.columns(2, gap="large")
-
 with g1:
     render_section("Binnenland", hours_limit=hrs)
     render_section("Show", hours_limit=hrs)
     render_section("Sport", hours_limit=hrs)
-
 with g2:
     render_section("Buitenland", hours_limit=hrs)
     render_section("Lokaal", hours_limit=hrs)
     render_section("Tech", hours_limit=hrs)
-
 render_section("Opmerkelijk", hours_limit=hrs)
 
-st.caption("Tip: klik ‘Meer …’ voor oudere berichten in die categorie. 🌦️ Weer zit in het menu.")
+st.caption("Home is RSS-snel. Voor de volledige (AI) samenvatting: open een bericht via 🔎 Open.")
