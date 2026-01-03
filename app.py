@@ -67,17 +67,14 @@ if auto_refresh:
         st.warning("Auto refresh vereist dependency: streamlit-autorefresh. Voeg toe aan requirements.txt.")
 
 st.markdown(
-    f\"\"\"
+    f"""
 <div class="kbm-topbar">
   <div class="kbm-brand">
-    <img src="data:image/png;base64,{logo_b64()}" />
-    <div>
-      <div class="kbm-title">KbM Nieuws</div>
-      <div class="kbm-sub">Alles lezen in de app • Klik op titel = Artikel-pagina</div>
-    </div>
+    <div class="kbm-title">KbM Nieuws</div>
+    <div class="kbm-sub">Alles lezen in de app • Klik op titel = Artikel-pagina</div>
   </div>
 </div>
-\"\"\",
+""",
     unsafe_allow_html=True,
 )
 
