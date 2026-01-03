@@ -1,59 +1,69 @@
 import streamlit as st
-from common import load_article, host, ai_backgrounder, build_related_snippets
+from common import fetch_article_text, ai_long_summary, build_related_snippets, ai_multi_source_background, host, pretty_dt
 
 st.set_page_config(page_title="Artikel", page_icon="📰", layout="wide")
 st.markdown("# Artikel")
 
-try:
-    qp = st.query_params
-    url = qp.get("url")
-except Exception:
-    url = None
-
-if isinstance(url, list):
-    url = url[0] if url else None
-
+url = st.query_params.get("url", "")
 if not url:
-    st.info("Geen URL meegegeven. Ga terug en open een bericht via 🔎 Open.")
+    st.error("Geen artikel-URL meegegeven.")
     st.stop()
 
-with st.spinner("Artikel ophalen…"):
-    art = load_article(url)
+st.caption(f"Bron: {host(url)}")
+st.markdown(f"**URL:** {url}")
 
-title = art.get("title") or "Bericht"
-src = host(url)
-st.markdown(f"## {title}")
-st.caption(src)
+art = fetch_article_text(url)
 
-if art.get("ok") and art.get("text"):
-    st.success("Tekst is uitgelezen (statisch).")
-    with st.expander("Volledige tekst (geëxtraheerd)", expanded=False):
-        st.write(art["text"])
-else:
-    # Nicer message
-    st.warning("Deze bron levert de volledige tekst vaak pas na cookies/consent en JavaScript.")
-    st.info("Geen stress: we maken hieronder een uitgebreid achtergrondstuk op basis van meerdere bronnen (als beschikbaar).")
+if art.get("ok"):
+    if art.get("img"):
+        st.image(art["img"], use_container_width=True)
+    if art.get("title"):
+        st.markdown(f"## {art['title']}")
 
-    # Only do multi-source if we have an OpenAI key and we can find related snippets
-    with st.spinner("Gerelateerde berichten verzamelen…"):
-        snippets = build_related_snippets(url, title, window_hours=24, k=6)
+    with st.expander("Volledige tekst (uitgelezen)", expanded=False):
+        st.write(art.get("text",""))
 
-    if snippets:
-        with st.expander("Bronnen gebruikt (klik open)", expanded=False):
-            for s in snippets:
-                st.markdown(f"- **{s['source']}** • {s['title']} ({s['dt']})")
-                if s.get("rss_summary"):
-                    st.caption(s["rss_summary"][:300] + ("…" if len(s["rss_summary"]) > 300 else ""))
+    st.divider()
+    st.subheader("AI-achtergrond (heel uitgebreid)")
 
-        with st.spinner("Achtergrondstuk schrijven…"):
-            bg = ai_backgrounder(main_title=title, main_source=src, snippets=snippets)
+    if st.button("🧠 Maak/refresh AI-stuk", use_container_width=True):
+        st.session_state["kbm_ai"] = None
 
-        if bg:
-            st.markdown(bg)
-        else:
-            st.error("AI-achtergrondstuk kon niet worden gemaakt. Controleer OPENAI_API_KEY/OPENAI_MODEL in Secrets.")
+    if "kbm_ai" not in st.session_state or st.session_state["kbm_ai"] is None:
+        with st.spinner("AI schrijft…"):
+            st.session_state["kbm_ai"] = ai_long_summary(art.get("title",""), art.get("text",""), source=host(url))
+
+    if st.session_state.get("kbm_ai"):
+        st.write(st.session_state["kbm_ai"])
     else:
-        st.error("Geen gerelateerde bronnen gevonden om een achtergrondstuk te maken (probeer later opnieuw).")
+        st.warning("AI-samenvatting lukte niet (check OPENAI_API_KEY/OPENAI_MODEL).")
 
-st.divider()
-st.markdown(f"[Open origineel artikel]({url})")
+else:
+    st.warning("Dit artikel kon niet volledig uitgelezen worden (mogelijk JS/consent).")
+    st.info("Dan maken we een achtergrondstuk op basis van meerdere bronnen die hierover schrijven.")
+
+    related = build_related_snippets(url, main_title=host(url)+" • "+(art.get("title") or "artikel"), window_hours=48, k=7)
+    if not related:
+        st.error("Geen gerelateerde bronnen gevonden in de feeds.")
+        st.stop()
+
+    with st.expander("Bronnen die we combineren", expanded=False):
+        for r in related:
+            st.markdown(f"- **{r.get('source','')}** — {r.get('title','')} ({r.get('dt','')})")
+            if r.get("rss_summary"):
+                st.caption(r["rss_summary"][:240] + ("…" if len(r["rss_summary"])>240 else ""))
+
+    st.divider()
+    st.subheader("AI-achtergrond op basis van meerdere bronnen")
+
+    if st.button("🧠 Maak/refresh achtergrondstuk", use_container_width=True):
+        st.session_state["kbm_ai_multi"] = None
+
+    if "kbm_ai_multi" not in st.session_state or st.session_state["kbm_ai_multi"] is None:
+        with st.spinner("AI schrijft (multi-bron)…"):
+            st.session_state["kbm_ai_multi"] = ai_multi_source_background(main_title=host(url), snippets=related)
+
+    if st.session_state.get("kbm_ai_multi"):
+        st.write(st.session_state["kbm_ai_multi"])
+    else:
+        st.warning("AI-samenvatting lukte niet (check OPENAI_API_KEY/OPENAI_MODEL).")
