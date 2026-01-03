@@ -69,17 +69,21 @@ def render_section(cat_name: str, only_recent_hours: int | None):
         if hero.get("summary"):
             st.write(hero["summary"])
 
-    with colB:
-        for t in thumbs:
-            r1, r2 = st.columns([0.35, 0.65], gap="small")
-            with r1:
-                if t.get("img"):
-                    st.image(t["img"], use_container_width=True)
-            with r2:
-                st.markdown(f"**[{t['title']}]({t['link']})**")
-                dt_txt = t["dt"].astimezone().strftime("%H:%M") if t.get("dt") else ""
-                st.markdown(f"<div class='kbm-meta'>{dt_txt}{' • ' if dt_txt else ''}{host(t['link'])}</div>", unsafe_allow_html=True)
+with colB:
+    for t in thumbs:
+        r1, r2 = st.columns([0.35, 0.65], gap="small")
+        with r1:
+            if t.get("img"):
+                st.image(t["img"], use_container_width=True)
+        with r2:
+            st.markdown(f"**[{t['title']}]({t['link']})**")
+            dt_txt = t["dt"].astimezone().strftime("%H:%M") if t.get("dt") else ""
+            st.markdown(
+                f"<div class='kbm-meta'>{dt_txt}{' • ' if dt_txt else ''}{host(t['link'])}</div>",
+                unsafe_allow_html=True
+            )
 
+# ⬇️ LET OP: deze regels staan NIET meer ingesprongen
 page_map = {
     "Net binnen": "pages/00_Net_binnen.py",
     "Binnenland": "pages/01_Binnenland.py",
@@ -91,11 +95,12 @@ page_map = {
     "Opmerkelijk": "pages/08_Opmerkelijk.py",
     "Weer": "pages/05_Weer.py",
 }
-    target = page_map.get(cat_name)
-    if target:
-        st.page_link(target, label=f"Meer {cat_name}", icon="➡️")
 
-    st.markdown("</div>", unsafe_allow_html=True)
+target = page_map.get(cat_name)
+if target:
+    st.page_link(target, label=f"Meer {cat_name}", icon="➡️")
+
+st.markdown("</div>", unsafe_allow_html=True)
 
 st.markdown("## Net binnen")
 render_section("Net binnen", only_recent_hours=4)
