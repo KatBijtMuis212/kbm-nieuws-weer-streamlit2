@@ -72,22 +72,68 @@ def wx_emoji(code: int) -> str:
     if c in (51,53,55,56,57,61,63,65,66,67,80,81,82): return "🌧️"
     return "🌤️"
 
-@st.cache_data(ttl=900, show_spinner=False)
+@st.cache_data(ttl=1800, show_spinner=False)
 def knmi_text():
-    # Best effort scraping (layout kan wijzigen)
+    """
+    Probeert een bruikbaar tekstueel weerbericht van KNMI te halen.
+    We pakken alleen content-achtige tekst en gooien scripts/menus weg.
+    """
     try:
+        from bs4 import BeautifulSoup
+
         url = "https://www.knmi.nl/nederland-nu/weer/verwachtingen"
         r = requests.get(url, headers={"User-Agent": UA}, timeout=20)
-        if not r.ok:
-            return None
-        html = r.text
-        html = re.sub(r"(?is)<(script|style).*?>.*?</\\1>", " ", html)
-        txt = re.sub(r"(?is)<[^>]+>", " ", html)
-        txt = re.sub(r"\\s+", " ", txt).strip()
-        idx = txt.lower().find("verwachting")
-        if idx != -1:
-            return txt[idx:idx+1100]
-        return txt[:1100]
+        r.raise_for_status()
+
+        soup = BeautifulSoup(r.text, "html.parser")
+
+        # Weg met rommel
+        for t in soup(["script", "style", "noscript", "svg"]):
+            t.decompose()
+
+        # Probeer eerst de <main> content (meestal waar de tekst staat)
+        main = soup.find("main")
+        node = main if main else soup.body
+
+        # Verzamel kopjes + paragrafen als “weerbericht”
+        parts = []
+        for el in node.find_all(["h2", "h3", "p", "li"]):
+            txt = el.get_text(" ", strip=True)
+            if not txt:
+                continue
+
+            low = txt.lower()
+
+            # filter “navigatie / cookie / verouderde browser / privacy”-achtige teksten
+            bad = [
+                "function ", "readcookie", "document.cookie", "dataLayer".lower(),
+                "verouderde browser", "cookies", "privacy", "naar de hoofd content",
+                "javascript", "tag manager", "stg_debug"
+            ]
+            if any(b in low for b in bad):
+                continue
+
+            # filter extreem korte troep
+            if len(txt) < 25 and not (txt.endswith(":") or txt.lower() in ["verwachtingen", "weerbericht"]):
+                continue
+
+            parts.append(txt)
+
+        # Dedup + limit
+        out = []
+        seen = set()
+        for p in parts:
+            key = p[:80].lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(p)
+
+        text = "\n\n".join(out[:40]).strip()
+
+        # Als het nog steeds “te leeg” is, geef None terug
+        return text if len(text) > 300 else None
+
     except Exception:
         return None
 
