@@ -8,9 +8,22 @@ APP_TITLE = "KbM Nieuws"
 st.set_page_config(page_title=APP_TITLE, page_icon="🗞️", layout="wide")
 inject_css(st)
 
+# Page map as global (avoids indentation gremlins inside functions)
+PAGE_MAP = {
+    "Net binnen": "pages/00_Net_binnen.py",
+    "Binnenland": "pages/01_Binnenland.py",
+    "Buitenland": "pages/02_Buitenland.py",
+    "Show": "pages/03_Show.py",
+    "Lokaal": "pages/04_Lokaal.py",
+    "Sport": "pages/06_Sport.py",
+    "Tech": "pages/07_Tech.py",
+    "Opmerkelijk": "pages/08_Opmerkelijk.py",
+    "Weer": "pages/05_Weer.py",
+}
 
-# --- Optional private password ---
+
 def require_login():
+    """Optional private password via Streamlit Secrets (APP_PASSWORD)."""
     pw = st.secrets.get("APP_PASSWORD", "").strip()
     if not pw:
         return
@@ -33,8 +46,8 @@ def require_login():
 require_login()
 
 
-# --- Header / Brand ---
 def logo_b64() -> str:
+    """Inline logo for header."""
     try:
         with open("assets/Kbmnieuwslogo-zwartomrand.png", "rb") as f:
             return base64.b64encode(f.read()).decode("ascii")
@@ -57,7 +70,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# --- Controls ---
+# Controls
 leftc, rightc = st.columns([1.2, 0.8], gap="large")
 with leftc:
     query = st.text_input("Zoekterm (optioneel)", placeholder="bijv. Huizen, politiek, muziek…")
@@ -83,7 +96,7 @@ def render_section(cat_name: str, only_recent_hours: int | None):
         st.info(f"Geen berichten voor **{cat_name}** (nu).")
         return
 
-    # Hero: liefst met image, anders eerste item
+    # Hero: preferably with image
     hero = next((x for x in items if x.get("img")), items[0])
     rest = [x for x in items if x is not hero]
     thumbs = rest[:4]
@@ -107,42 +120,44 @@ def render_section(cat_name: str, only_recent_hours: int | None):
         if hero.get("summary"):
             st.write(hero["summary"])
 
-    # THUMBS
+    # THUMBS (HTML rows => mobile-friendly, no giant stacked images)
     with colB:
+        st.markdown("<div class='kbm-thumbs'>", unsafe_allow_html=True)
+
         for t in thumbs:
-            r1, r2 = st.columns([0.35, 0.65], gap="small")
-            with r1:
-                if t.get("img"):
-                    st.image(t["img"], use_container_width=True)
-                else:
-                    st.write("")  # keeps layout calm
-            with r2:
-                st.markdown(f"**[{t['title']}]({t['link']})**")
-                dt_small = t["dt"].astimezone().strftime("%H:%M") if t.get("dt") else ""
-                meta2 = f"{dt_small}{' • ' if dt_small else ''}{host(t['link'])}"
-                st.markdown(f"<div class='kbm-meta'>{meta2}</div>", unsafe_allow_html=True)
+            dt_small = t["dt"].astimezone().strftime("%H:%M") if t.get("dt") else ""
+            meta2 = f"{dt_small}{' • ' if dt_small else ''}{host(t['link'])}"
 
-    # More-link to category page
-    page_map = {
-        "Net binnen": "pages/00_Net_binnen.py",
-        "Binnenland": "pages/01_Binnenland.py",
-        "Buitenland": "pages/02_Buitenland.py",
-        "Show": "pages/03_Show.py",
-        "Lokaal": "pages/04_Lokaal.py",
-        "Sport": "pages/06_Sport.py",
-        "Tech": "pages/07_Tech.py",
-        "Opmerkelijk": "pages/08_Opmerkelijk.py",
-        "Weer": "pages/05_Weer.py",
-    }
+            img = t.get("img") or ""
+            img_tag = (
+                f"<img class='kbm-thumbimg' src='{img}' alt='' />"
+                if img
+                else "<div class='kbm-thumbimg' aria-hidden='true'></div>"
+            )
 
-    target = page_map.get(cat_name)
+            st.markdown(
+                f"""
+                <div class="kbm-thumbrow">
+                  {img_tag}
+                  <div class="kbm-thumbtext">
+                    <p class="kbm-thumbtitle"><a href="{t['link']}" target="_blank" rel="noopener">{t['title']}</a></p>
+                    <div class="kbm-thumbmeta">{meta2}</div>
+                  </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    target = PAGE_MAP.get(cat_name)
     if target:
         st.page_link(target, label=f"Meer {cat_name}", icon="➡️")
 
     st.markdown("</div>", unsafe_allow_html=True)
 
 
-# --- Home layout ---
+# Home layout
 st.markdown("## Net binnen")
 render_section("Net binnen", only_recent_hours=4)
 
