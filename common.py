@@ -1,4 +1,4 @@
-# common.py — KbM Streamlit (stable: no 3.10+ union syntax, safe timeouts, RTL direct scrape + OG media)
+# common.py — KbM Streamlit (feeds expanded: Regionaal + Kranten + ICT)
 from __future__ import annotations
 
 import hashlib
@@ -6,7 +6,7 @@ import re
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple, Any
-from urllib.parse import urlparse, urljoin, unquote
+from urllib.parse import urlparse, urljoin
 
 import feedparser
 import requests
@@ -15,18 +15,12 @@ from bs4 import BeautifulSoup
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36 KbMStreamlit/1.0"
 HEADERS = {"User-Agent": UA, "Accept-Language": "nl-NL,nl;q=0.9,en;q=0.8"}
 
-# ----------------------------
-# Cache
-# ----------------------------
 _FEED_CACHE: Dict[str, Dict[str, Any]] = {}
 _CACHE_TTL = 180  # seconds
 
 def clear_feed_caches() -> None:
     _FEED_CACHE.clear()
 
-# ----------------------------
-# Feeds
-# ----------------------------
 FEEDS: Dict[str, str] = {
     # NOS
     "nos_binnenland": "https://feeds.nos.nl/nosnieuwsbinnenland",
@@ -53,7 +47,7 @@ FEEDS: Dict[str, str] = {
     "nu_tech": "https://www.nu.nl/rss/tech-wetenschap",
     "nu_goed": "https://www.nu.nl/rss/goed-nieuws",
 
-    # AD
+    # AD algemeen + extra
     "ad_home": "https://www.ad.nl/home/rss.xml",
     "ad_geld": "https://www.ad.nl/geld/rss.xml",
     "ad_sterren": "https://www.ad.nl/sterren/rss.xml",
@@ -64,9 +58,80 @@ FEEDS: Dict[str, str] = {
     "ad_royalty": "https://www.ad.nl/royalty/rss.xml",
     "ad_cultuur": "https://www.ad.nl/cultuur/rss.xml",
     "ad_series": "https://www.ad.nl/series/rss.xml",
+    "ad_bizar": "https://www.ad.nl/bizar/rss.xml",
+    "ad_show": "https://www.ad.nl/show/rss.xml",
+
+    # AD Regio
+    "ad_den_haag": "https://www.ad.nl/den-haag/rss.xml",
+    "ad_rotterdam": "https://www.ad.nl/rotterdam/rss.xml",
+    "ad_alphen": "https://www.ad.nl/alphen/rss.xml",
+    "ad_groene_hart": "https://www.ad.nl/groene-hart/rss.xml",
+    "ad_gouda": "https://www.ad.nl/gouda/rss.xml",
+    "ad_woerden": "https://www.ad.nl/woerden/rss.xml",
 
     # RTV Midden Holland
     "rtvmh": "https://rtvmiddenholland.nl/feed/",
+
+    # Omroep West
+    "west_algemeen": "https://www.omroepwest.nl/rss/index.xml",
+    "west_sport": "https://www.omroepwest.nl/rss/sport.xml",
+    "west_economie": "https://www.omroepwest.nl/rss/economie.xml",
+    "west_opsporing": "https://www.omroepwest.nl/rss/opsporing.xml",
+    "west_bodegraven": "https://www.omroepwest.nl/rss/bodegraven-reeuwijk.xml",
+    "west_gouda": "https://www.omroepwest.nl/rss/gouda.xml",
+    "west_rijswijk": "https://www.omroepwest.nl/rss/rijswijk.xml",
+    "west_alphen": "https://www.omroepwest.nl/rss/alphen-aan-den-rijn.xml",
+    "west_delft": "https://www.omroepwest.nl/rss/delft.xml",
+    "west_leiden": "https://www.omroepwest.nl/rss/leiden.xml",
+    "west_westland": "https://www.omroepwest.nl/rss/westland.xml",
+    "west_denhaag": "https://www.omroepwest.nl/rss/denhaag.xml",
+    # vodcasts (best-effort)
+    "west_vodcast_1": "https://omroepwest.bbvms.com/vodcast/1509025993954667",
+    "west_vodcast_2": "https://omroepwest.bbvms.com/vodcast/1525261761416200",
+    "west_vodcast_3": "https://omroepwest.bbvms.com/vodcast/1586159164787391",
+    "west_vodcast_4": "https://omroepwest.bbvms.com/vodcast/1671303576617029",
+
+    # NH Nieuws
+    "nh_gooi": "https://rss.nhnieuws.nl/rss/nhgooi",
+
+    # Volkskrant
+    "vk_voorpagina": "https://www.volkskrant.nl/voorpagina/rss.xml",
+    "vk_cultuur": "https://www.volkskrant.nl/cultuur-media/rss.xml",
+    "vk_economie": "https://www.volkskrant.nl/economie/rss.xml",
+    "vk_wetenschap": "https://www.volkskrant.nl/wetenschap/rss.xml",
+    "vk_achtergrond": "https://www.volkskrant.nl/nieuws-achtergrond/rss.xml",
+
+    # NRC
+    "nrc_main": "https://www.nrc.nl/rss/",
+    "nrc_feedburner": "http://feeds.feedburner.com/nrc/FmXV",
+    "nrc_cultuur": "http://www.nrc.nl/nieuws/categorie/cultuur/rss.php",
+    "nrc_economie": "http://www.nrc.nl/rss/economie",
+    "nrc_sport": "http://www.nrc.nl/rss/sport",
+    "nrc_wetenschap": "http://www.nrc.nl/nieuws/categorie/wetenschap/rss.php",
+
+    # Trouw
+    "trouw_voorpagina": "https://www.trouw.nl/voorpagina/rss.xml",
+    "trouw_tijdgeest": "https://www.trouw.nl/tijdgeest/rss.xml",
+    "trouw_columnisten": "https://www.trouw.nl/columnisten/rss.xml",
+    "trouw_verdieping": "https://www.trouw.nl/verdieping/rss.xml",
+    "trouw_duurzaamheid": "https://www.trouw.nl/duurzaamheid-economie/rss.xml",
+    "trouw_opinie": "https://www.trouw.nl/opinie/rss.xml",
+    "trouw_cultuur": "https://www.trouw.nl/cultuur-media/rss.xml",
+    "trouw_politiek": "https://www.trouw.nl/politiek/rss.xml",
+    "trouw_sport": "https://www.trouw.nl/sport/rss.xml",
+    "trouw_wetenschap": "https://www.trouw.nl/wetenschap/rss.xml",
+    "trouw_cartoons": "https://www.trouw.nl/cartoons/rss.xml",
+
+    # Nederlands Dagblad
+    "nd_nieuws": "http://www.nd.nl/rss/nieuws",
+    "nd_binnenland": "http://www.nd.nl/rss/binnenland",
+    "nd_buitenland": "http://www.nd.nl/rss/buitenland",
+    "nd_economie": "http://www.nd.nl/rss/economie",
+    "nd_cultuur": "http://www.nd.nl/rss/cultuur",
+
+    # ICT/Tech
+    "ict_pcmweb": "https://feeds.feedburner.com/pcmweb_nieuws",
+    "ict_computable": "https://feeds.feedburner.com/ComputableRss",
 
     # RTL direct scrape markers
     "rtl_nieuws": "RTL_DIRECT_NEWS",
@@ -74,15 +139,30 @@ FEEDS: Dict[str, str] = {
 }
 
 CATEGORY_FEEDS: Dict[str, List[str]] = {
-    "Net binnen": ["nos_binnenland", "nu_algemeen", "rtvmh", "rtl_nieuws"],
-    "Binnenland": ["nos_binnenland", "nu_algemeen", "ad_home", "rtl_nieuws"],
-    "Buitenland": ["nos_buitenland", "nu_algemeen", "ad_home", "rtl_nieuws"],
-    "Show": ["nu_entertainment", "nu_achterklap", "ad_sterren", "ad_showbytes", "rtl_boulevard"],
-    "Lokaal": ["rtvmh"],
-    "Sport": ["nos_sport", "nu_sport", "rtl_nieuws"],
-    "Tech": ["nos_tech", "nu_tech"],
-    "Opmerkelijk": ["nos_opmerkelijk", "nu_opmerkelijk", "nu_goed"],
-    "Economie": ["nos_economie", "nu_economie", "ad_geld", "rtl_nieuws"],
+    "Net binnen": ["nos_binnenland", "nu_algemeen", "rtvmh", "west_algemeen", "nh_gooi", "rtl_nieuws"],
+
+    "Binnenland": ["nos_binnenland", "nu_algemeen", "ad_home", "vk_voorpagina", "trouw_voorpagina", "nd_binnenland", "rtl_nieuws"],
+    "Buitenland": ["nos_buitenland", "vk_achtergrond", "nd_buitenland", "nrc_main", "rtl_nieuws"],
+    "Show": ["nu_entertainment", "nu_achterklap", "ad_sterren", "ad_show", "ad_showbytes", "rtl_boulevard"],
+    "Lokaal": ["rtvmh", "west_bodegraven", "west_gouda", "west_alphen"],
+    "Sport": ["nos_sport", "nos_f1", "nu_sport", "west_sport", "nrc_sport", "trouw_sport", "rtl_nieuws"],
+    "Tech": ["nos_tech", "nu_tech", "ict_pcmweb", "ict_computable"],
+    "Opmerkelijk": ["nos_opmerkelijk", "nu_opmerkelijk", "nu_goed", "ad_bizar", "trouw_cartoons"],
+    "Economie": ["nos_economie", "nu_economie", "ad_geld", "west_economie", "vk_economie", "nrc_economie", "trouw_duurzaamheid", "nd_economie", "rtl_nieuws"],
+
+    "Regionaal": [
+        "west_algemeen", "west_opsporing", "west_denhaag", "west_delft", "west_leiden", "west_westland",
+        "west_rijswijk", "west_gouda", "west_alphen", "west_bodegraven",
+        "nh_gooi",
+        "ad_den_haag", "ad_rotterdam", "ad_alphen", "ad_groene_hart", "ad_gouda", "ad_woerden",
+        "rtvmh",
+        "west_vodcast_1", "west_vodcast_2", "west_vodcast_3", "west_vodcast_4",
+    ],
+
+    "Krant & Opinie": ["vk_voorpagina", "vk_achtergrond", "nrc_main", "trouw_opinie", "trouw_columnisten", "nd_nieuws"],
+    "Cultuur & Media": ["nos_cultuur", "vk_cultuur", "nrc_cultuur", "trouw_cultuur", "nd_cultuur", "ad_cultuur", "ad_muziek", "ad_film", "ad_series"],
+    "Wetenschap": ["vk_wetenschap", "nrc_wetenschap", "trouw_wetenschap", "nos_tech"],
+    "Politiek": ["nos_politiek", "trouw_politiek", "vk_achtergrond", "nrc_main"],
 
     "RTL Nieuws": ["rtl_nieuws"],
     "RTL Boulevard": ["rtl_boulevard"],
@@ -149,9 +229,6 @@ def _fetch_feed(url: str):
     except Exception:
         return stale if stale is not None else feedparser.parse(b"")
 
-# ----------------------------
-# RTL: direct scrape list pages
-# ----------------------------
 def _abs(href: str) -> str:
     if not href:
         return ""
@@ -167,7 +244,6 @@ def _scrape_rtl_listing(list_url: str, max_items: int = 40) -> List[Dict[str, An
             return out
         soup = BeautifulSoup(r.text or "", "lxml")
 
-        # RTL uses various card structures; collect lots of anchors and filter
         anchors = soup.find_all("a", href=True)
         seen = set()
         for a in anchors:
@@ -202,9 +278,6 @@ def _scrape_rtl_listing(list_url: str, max_items: int = 40) -> List[Dict[str, An
         return out
     return out
 
-# ----------------------------
-# Main collector
-# ----------------------------
 def collect_items(feed_labels: List[str], query: Optional[str]=None, max_per_feed: int=25, **_ignored) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     items: List[Dict[str, Any]] = []
     for label in feed_labels:
@@ -249,9 +322,6 @@ def collect_items(feed_labels: List[str], query: Optional[str]=None, max_per_fee
     items.sort(key=lambda x: x.get("dt") or datetime(1970,1,1,tzinfo=timezone.utc), reverse=True)
     return items, {}
 
-# ----------------------------
-# Article readable text
-# ----------------------------
 def _clean_text(s: str) -> str:
     return re.sub(r"\s+", " ", (s or "")).strip()
 
@@ -298,9 +368,6 @@ def fetch_readable_text(url: str) -> Tuple[str, str]:
     except Exception:
         return "", ""
 
-# ----------------------------
-# OG/Twitter media detection (image/video/audio)
-# ----------------------------
 def _meta(soup: BeautifulSoup, key: str) -> str:
     tag = soup.find("meta", attrs={"property": key}) or soup.find("meta", attrs={"name": key})
     if tag and tag.get("content"):
@@ -314,38 +381,13 @@ def fetch_article_media(url: str) -> Dict[str, str]:
         if not r.ok:
             return media
         soup = BeautifulSoup(r.text or "", "lxml")
-
         media["image"] = _meta(soup, "og:image") or _meta(soup, "twitter:image")
         media["video"] = _meta(soup, "og:video") or _meta(soup, "og:video:url") or _meta(soup, "twitter:player")
         media["audio"] = _meta(soup, "og:audio") or _meta(soup, "og:audio:url")
-
-        if not media["video"]:
-            v = soup.find("video")
-            if v:
-                media["poster"] = (v.get("poster") or "").strip()
-                src = (v.get("src") or "").strip()
-                if not src:
-                    s = v.find("source")
-                    if s and s.get("src"):
-                        src = (s.get("src") or "").strip()
-                media["video"] = src
-
-        if not media["audio"]:
-            a = soup.find("audio")
-            if a:
-                src = (a.get("src") or "").strip()
-                if not src:
-                    s = a.find("source")
-                    if s and s.get("src"):
-                        src = (s.get("src") or "").strip()
-                media["audio"] = src
     except Exception:
         return media
     return media
 
-# ----------------------------
-# Related items
-# ----------------------------
 def find_related_items(all_items: List[Dict[str, Any]], title: str, max_n: int=3) -> List[Dict[str, Any]]:
     words = [w.lower() for w in re.findall(r"[A-Za-zÀ-ÿ0-9]{4,}", title or "")]
     if not words:
@@ -370,12 +412,8 @@ def find_related_items(all_items: List[Dict[str, Any]], title: str, max_n: int=3
             break
     return out
 
-# Backward compat name used earlier in your project
 find_related = find_related_items
 
-# ----------------------------
-# Optional OpenAI summary (Responses API)
-# ----------------------------
 def openai_summarize(model: str, api_key: str, prompt: str) -> str:
     if not api_key:
         return ""
