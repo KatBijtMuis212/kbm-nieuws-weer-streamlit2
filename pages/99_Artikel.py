@@ -1,7 +1,7 @@
 import streamlit as st
-from common import load_article, host, ai_summarize
+from common import load_article, host, ai_backgrounder, build_related_snippets
 
-st.set_page_config(page_title="Artikel", page_icon="🔎", layout="wide")
+st.set_page_config(page_title="Artikel", page_icon="📰", layout="wide")
 st.markdown("# Artikel")
 
 try:
@@ -18,29 +18,42 @@ if not url:
     st.stop()
 
 with st.spinner("Artikel ophalen…"):
-    it = load_article(url)
+    art = load_article(url)
 
-st.markdown(f"## {it.get('title') or 'Bericht'}")
-st.caption(host(url))
+title = art.get("title") or "Bericht"
+src = host(url)
+st.markdown(f"## {title}")
+st.caption(src)
 
-if it.get("ok") and it.get("text"):
-    if it.get("summary"):
-        st.markdown(it["summary"])
-    else:
-        st.info("Geen AI-samenvatting (nog).")
-        if st.button("🧠 Maak AI-samenvatting", use_container_width=True):
-            with st.spinner("Samenvatting maken…"):
-                s = ai_summarize(it["text"], title=it.get("title", ""), source=host(url))
-            if s:
-                st.markdown(s)
-            else:
-                st.warning("AI-samenvatting lukte niet (check OPENAI_API_KEY/OPENAI_MODEL).")
-
+if art.get("ok") and art.get("text"):
+    st.success("Tekst is uitgelezen (statisch).")
     with st.expander("Volledige tekst (geëxtraheerd)", expanded=False):
-        st.write(it["text"])
+        st.write(art["text"])
 else:
-    st.warning("Kon geen tekst uitlezen (site blokkeert of alleen via consent/JS).")
-    st.info("AMP/print varianten worden automatisch geprobeerd. Als dat faalt, blijft alleen RSS-preview over.")
+    # Nicer message
+    st.warning("Deze bron levert de volledige tekst vaak pas na cookies/consent en JavaScript.")
+    st.info("Geen stress: we maken hieronder een uitgebreid achtergrondstuk op basis van meerdere bronnen (als beschikbaar).")
+
+    # Only do multi-source if we have an OpenAI key and we can find related snippets
+    with st.spinner("Gerelateerde berichten verzamelen…"):
+        snippets = build_related_snippets(url, title, window_hours=24, k=6)
+
+    if snippets:
+        with st.expander("Bronnen gebruikt (klik open)", expanded=False):
+            for s in snippets:
+                st.markdown(f"- **{s['source']}** • {s['title']} ({s['dt']})")
+                if s.get("rss_summary"):
+                    st.caption(s["rss_summary"][:300] + ("…" if len(s["rss_summary"]) > 300 else ""))
+
+        with st.spinner("Achtergrondstuk schrijven…"):
+            bg = ai_backgrounder(main_title=title, main_source=src, snippets=snippets)
+
+        if bg:
+            st.markdown(bg)
+        else:
+            st.error("AI-achtergrondstuk kon niet worden gemaakt. Controleer OPENAI_API_KEY/OPENAI_MODEL in Secrets.")
+    else:
+        st.error("Geen gerelateerde bronnen gevonden om een achtergrondstuk te maken (probeer later opnieuw).")
 
 st.divider()
 st.markdown(f"[Open origineel artikel]({url})")
