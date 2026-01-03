@@ -1,9 +1,19 @@
-# kbm_ui.py — tiny safety: avoid external link in preview + unique keys (stable)
+import html
 import streamlit as st
 from common import CATEGORY_FEEDS, collect_items, within_hours, host, item_id, pretty_dt
 
 def article_url(src_url: str) -> str:
     return f"/Artikel?url={src_url}"
+
+def _render_rss_html(s: str) -> None:
+    """Render RSS summary as HTML inside Streamlit (best-effort).
+    Many feeds include HTML tags; we unescape entities first.
+    """
+    if not s:
+        return
+    s = html.unescape(s)
+    # Streamlit markdown accepts a subset of HTML when unsafe_allow_html=True.
+    st.markdown(s, unsafe_allow_html=True)
 
 def add_bookmark(it: dict):
     if "bookmarks" not in st.session_state:
@@ -18,14 +28,14 @@ def add_bookmark(it: dict):
         "dt": it.get("dt"),
     })
 
-def render_item_preview(it: dict, key_prefix: str = ""):
+def render_item_preview(it: dict):
     cols = st.columns([0.62, 0.38], gap="small")
     with cols[0]:
         st.caption(f"{host(it.get('link',''))} • {pretty_dt(it.get('dt'))}")
     with cols[1]:
         b1, b2 = st.columns(2, gap="small")
         with b1:
-            if st.button("⭐", key=f"{key_prefix}bm_{it['id']}", use_container_width=True):
+            if st.button("⭐ Lees later", key=f"bm_prev_{it['id']}", use_container_width=True):
                 add_bookmark(it)
                 st.toast("Toegevoegd aan lees later ⭐")
         with b2:
@@ -36,19 +46,17 @@ def render_item_preview(it: dict, key_prefix: str = ""):
 
     if it.get("rss_summary"):
         st.markdown("**Korte preview (RSS):**")
-        st.write(it["rss_summary"])
+        _render_rss_html(it["rss_summary"])
 
-    # No auto-external link here; keep everything in-app
-
-def render_section(cat_name: str, hours_limit: int = None, query: str = None, max_items: int = 40, thumbs_n: int = 4):
+def render_section(cat_name: str, hours_limit: int | None, query: str | None, max_items: int = 40, thumbs_n: int = 4):
     feed_labels = CATEGORY_FEEDS.get(cat_name, [])
-    items, _ = collect_items(feed_labels, query=query, max_per_feed=25)
+    items, _ = collect_items(feed_labels, query=query, max_per_feed=30)
 
     if hours_limit is not None:
-        items = [x for x in items if within_hours(x.get("dt"), int(hours_limit))]
+        items = [x for x in items if within_hours(x.get("dt"), hours_limit)]
 
     if not items:
-        st.info(f"Geen berichten voor **{cat_name}** (nu).")
+        st.info(f"Geen berichten voor **{cat_name}** (nu).") 
         return
 
     for it in items:
@@ -62,7 +70,7 @@ def render_section(cat_name: str, hours_limit: int = None, query: str = None, ma
     st.markdown("<div class='kbm-card' style='margin-top:12px'>", unsafe_allow_html=True)
     st.markdown(f"### {cat_name}")
 
-    colA, colB = st.columns([1.25, 0.75], gap="large")
+    colA, colB = st.columns([1.25, 0.75], gap="large")    
 
     with colA:
         if hero.get("img"):
@@ -71,7 +79,7 @@ def render_section(cat_name: str, hours_limit: int = None, query: str = None, ma
         st.markdown(f"<div class='kbm-meta'>{host(hero['link'])} • {pretty_dt(hero.get('dt'))}</div>", unsafe_allow_html=True)
         st.link_button("🔎 Open in KbM", url=article_url(hero["link"]), use_container_width=True)
         with st.expander("Lees preview", expanded=False):
-            render_item_preview(hero, key_prefix=f"{cat_name}_hero_")
+            render_item_preview(hero)
 
     with colB:
         st.markdown("<div class='kbm-thumbs'>", unsafe_allow_html=True)
@@ -93,7 +101,7 @@ def render_section(cat_name: str, hours_limit: int = None, query: str = None, ma
                 unsafe_allow_html=True,
             )
             with st.expander("Lees preview", expanded=False):
-                render_item_preview(t, key_prefix=f"{cat_name}_{t['id']}_")
+                render_item_preview(t)
         st.markdown("</div>", unsafe_allow_html=True)
 
     if more:
