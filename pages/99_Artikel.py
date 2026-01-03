@@ -14,11 +14,11 @@ if isinstance(url, list):
     url = url[0] if url else None
 
 if not url:
-    st.info("Geen URL meegegeven. Ga terug en open een bericht via ‘Open’ of ‘Lees meer’.")
+    st.info("Geen URL meegegeven. Ga terug en open een bericht via 🔎 Open.")
     st.stop()
 
-with st.spinner("Artikel ophalen & samenvatten…"):
-    it = load_article(url, force_fetch=True)
+with st.spinner("Artikel ophalen & AI-samenvatten…"):
+    it = load_article(url)
 
 st.markdown(f"### {it.get('title') or 'Bericht'}")
 st.caption(host(url) + (f" • samenvatting: {it.get('summary_mode','')}" if it.get("summary_mode") else ""))
