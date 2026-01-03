@@ -113,7 +113,10 @@ def clear_feed_caches():
 # ----------------------------
 def host(url: str) -> str:
     try:
-        return urlparse(url).netloc.replace("www.", "")
+        u = url
+        if "news.google.com" in u:
+            u = resolve_google_news_url(u)
+        return urlparse(u).netloc.replace("www.", "")
     except Exception:
         return ""
 
@@ -157,10 +160,6 @@ def pretty_dt(dt: datetime | None) -> str:
     except Exception:
         return ""
 
-# Backwards-compat alias (kbm_ui may import pretty)
-def pretty(dt: datetime | None) -> str:
-    return pretty_dt(dt)
-
 def within_hours(dt: datetime | None, hours: int) -> bool:
     if not dt:
         return False
@@ -184,7 +183,7 @@ def resolve_google_news_url(url: str) -> str:
         if "url" in qs:
             return _strip_tracking_params(unquote(qs["url"]))
         html = _fetch_html(url)
-        m = re.search(r"[?&]url=([^&\"']+)", html)
+        m = re.search(r"[?&]url=([^&"']+)", html)
         if m:
             return _strip_tracking_params(unquote(m.group(1)))
         # last resort: follow redirects
@@ -487,3 +486,48 @@ def build_related_snippets(main_url: str, main_title: str, window_hours: int = 4
             "link": src,
         })
     return out
+
+
+def resolve_google_news_url(gn_url: str) -> str:
+    """Resolve Google News RSS 'articles/...' links to the original publisher URL (best-effort)."""
+    try:
+        if not gn_url or "news.google.com" not in gn_url:
+            return gn_url
+
+        # Sometimes url= already exists (either in the rss link or canonical)
+        m = re.search(r"[?&]url=([^&\"']+)", gn_url)
+        if m:
+            return unquote(m.group(1))
+
+        headers = {
+            "User-Agent": UA,
+            "Accept-Language": "nl-NL,nl;q=0.9,en;q=0.8",
+        }
+        r = requests.get(gn_url, headers=headers, timeout=10)
+        html = r.text or ""
+
+        # Canonical link may contain url=...
+        m = re.search(r'<link[^>]+rel="canonical"[^>]+href="([^"]+)"', html)
+        if m and m.group(1):
+            cand = m.group(1)
+            m2 = re.search(r"[?&]url=([^&\"']+)", cand)
+            if m2:
+                return unquote(m2.group(1))
+
+        # Look for url=... anywhere in HTML
+        m = re.search(r"[?&]url=([^&\"']+)", html)
+        if m:
+            return unquote(m.group(1))
+
+        # Alternative: data-n-au sometimes contains the real url
+        m = re.search(r'data-n-au="([^"]+)"', html)
+        if m and m.group(1):
+            return unquote(m.group(1))
+    except Exception:
+        pass
+    return gn_url
+
+
+
+def pretty(dt: datetime | None) -> str:
+    return pretty_dt(dt)
