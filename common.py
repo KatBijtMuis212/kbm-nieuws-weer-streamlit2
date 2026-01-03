@@ -140,6 +140,19 @@ def _strip_tracking_params(url: str) -> str:
         return url
 
 
+def _tokenize(s: str) -> set[str]:
+    s = (s or "").lower()
+    s = re.sub(r"[^a-z0-9áéíóúàèìòùäëïöüñç\s-]", " ", s)
+    toks = {t for t in re.split(r"\s+", s) if len(t) >= 4}
+    stop = {
+        "live", "video", "update", "vandaag", "gisteren", "deze", "waarom", "maar",
+        "daarom", "ondertussen", "namelijk", "zoals", "wordt", "werden", "heeft",
+        "hebben", "door", "voor", "over", "naar", "niet", "meer", "gaat", "gaan",
+        "nieuws", "bericht", "dit", "dat", "zijn", "waar", "wie", "wanneer"
+    }
+    return {t for t in toks if t not in stop}
+
+
 # ----------------------------
 # RSS COLLECTION
 # ----------------------------
@@ -181,8 +194,6 @@ def collect_items(
     feed_labels: list[str],
     query: str | None = None,
     max_per_feed: int = 25,
-    force_fetch: bool = False,
-    ai_on: bool = False,
 ):
     items: list[dict] = []
     for label in feed_labels:
@@ -221,7 +232,7 @@ def collect_items(
         ]
 
     items.sort(key=lambda x: x.get("dt") or datetime(1970, 1, 1, tzinfo=timezone.utc), reverse=True)
-    return items, {"count": len(items)}
+    return items
 
 
 # ----------------------------
@@ -243,12 +254,16 @@ def _candidate_urls_for_article(url: str) -> list[str]:
         base = urlunparse((u.scheme, u.netloc, u.path.rstrip("/") + "/", "", "", ""))
         candidates.append(base + "amp/")
         candidates.append(base + "print/")
-        candidates.append(urlunparse((u.scheme, u.netloc, u.path, u.params, urlencode([("output", "1")]), u.fragment)))
+        candidates.append(
+            urlunparse((u.scheme, u.netloc, u.path, u.params, urlencode([("output", "1")]), u.fragment))
+        )
 
     if u.netloc.endswith("nu.nl"):
         q = dict(parse_qsl(u.query, keep_blank_values=True))
         q.setdefault("output", "1")
-        candidates.append(urlunparse((u.scheme, u.netloc, u.path, u.params, urlencode(list(q.items())), u.fragment)))
+        candidates.append(
+            urlunparse((u.scheme, u.netloc, u.path, u.params, urlencode(list(q.items())), u.fragment))
+        )
 
     seen = set()
     out = []
@@ -295,7 +310,7 @@ def _extract_article_text_from_html(html: str) -> tuple[str, str]:
 
 
 # ----------------------------
-# AI SUMMARY (OpenAI) - optional
+# AI (OpenAI) - optional
 # ----------------------------
 def _openai_client():
     try:
@@ -312,7 +327,12 @@ def _openai_client():
         return None
 
 
-def ai_summarize(long_text: str, title: str = "", source: str = "") -> str | None:
+def ai_backgrounder(
+    main_title: str,
+    main_source: str,
+    snippets: list[dict],
+) -> str | None:
+    """Write a deeper, multi-source explainer when full text isn't fetchable."""
     client = _openai_client()
     if not client:
         return None
@@ -323,17 +343,36 @@ def ai_summarize(long_text: str, title: str = "", source: str = "") -> str | Non
     except Exception:
         model = "gpt-5.2"
 
-    prompt = f"""Schrijf een Nederlandstalige, journalistieke samenvatting van het volgende nieuwsartikel.
-- Begin met 1 zin lead (wat is er gebeurd, wie/waar/wanneer).
-- Daarna meerdere alinea's met context, duiding, feiten/cijfers die in de tekst staan.
-- Neem belangrijke namen/plaatsen over.
-- Sluit af met een korte lijst 'Kernpunten' (5-10 bullets).
-- Lengte: zo lang als nodig (mag zeer lang), maar blijf feitelijk en helder.
-Titel: {title}
-Bron: {source}
+    # Build evidence pack
+    lines = []
+    for i, s in enumerate(snippets, 1):
+        lines.append(f"[{i}] {s.get('source','')} • {s.get('title','')} • {s.get('dt','')}")
+        body = (s.get("text") or s.get("rss_summary") or "").strip()
+        # keep input bounded but still rich
+        if len(body) > 6000:
+            body = body[:6000] + "…"
+        lines.append(body)
+        lines.append("")
 
-ARTIKELTEKST:
-{long_text}
+    evidence = "\n".join(lines).strip()
+
+    prompt = f"""Schrijf een Nederlandstalig achtergrondstuk op basis van meerdere bronnen (hieronder).
+Belangrijk:
+- Gebruik alleen informatie die in de bron-snippets staat. Geen wilde aannames.
+- Schrijf in een rustige nieuws-stijl: helder, feitelijk, maar met context.
+- Structuur:
+  1) Lead (2–3 zinnen: wat is er aan de hand?)
+  2) Wat weten we zeker (met concrete details)
+  3) Context & achtergrond (waarom dit speelt)
+  4) Wat er nu gebeurt / wat er nog volgt
+  5) Kernpunten (7–12 bullets)
+- Lengte: zo lang als nodig (mag uitgebreid).
+
+Hoofd-titel: {main_title}
+Hoofd-bron: {main_source}
+
+BRON-SNIPPETS:
+{evidence}
 """
 
     try:
@@ -346,9 +385,81 @@ ARTIKELTEKST:
     return None
 
 
-# ----------------------------
-# PUBLIC API: load_article
-# ----------------------------
+def _format_dt(dt: datetime | None) -> str:
+    if not dt:
+        return ""
+    try:
+        return dt.astimezone().strftime("%d-%m %H:%M")
+    except Exception:
+        return ""
+
+
+def build_related_snippets(main_url: str, main_title: str, window_hours: int = 24, k: int = 6) -> list[dict]:
+    """Collect related items from all feeds using keyword overlap."""
+    main_tokens = _tokenize(main_title)
+    if not main_tokens:
+        return []
+
+    now = datetime.now(timezone.utc)
+    all_labels = list(FEEDS.keys())
+
+    items = []
+    for label in all_labels:
+        for it in collect_items([label], query=None, max_per_feed=25):
+            if not it.get("title") or not it.get("link"):
+                continue
+            if it["link"] == main_url:
+                continue
+            dt = it.get("dt")
+            if dt and dt < now - timedelta(hours=window_hours):
+                continue
+            tks = _tokenize(it["title"])
+            inter = len(main_tokens.intersection(tks))
+            if inter >= 2:  # small but meaningful
+                it["_score"] = inter
+                items.append(it)
+
+    items.sort(key=lambda x: (x.get("_score", 0), x.get("dt") or datetime(1970,1,1,tzinfo=timezone.utc)), reverse=True)
+    picked = []
+    seen_hosts = set()
+    for it in items:
+        h = it.get("source") or host(it.get("link",""))
+        # keep diversity: max 2 per host
+        if sum(1 for p in picked if (p.get("source") or "") == h) >= 2:
+            continue
+        picked.append(it)
+        if len(picked) >= k:
+            break
+
+    # Try to fetch some text for picked (best-effort, static only)
+    out = []
+    for it in picked:
+        src = it.get("link","")
+        txt = ""
+        try:
+            for cu in _candidate_urls_for_article(src):
+                html = _fetch_html(cu)
+                if _looks_like_privacy_gate(html):
+                    continue
+                _, txt = _extract_article_text_from_html(html)
+                if txt and len(txt) > 400:
+                    break
+        except Exception:
+            txt = ""
+
+        out.append(
+            {
+                "source": it.get("source") or host(src),
+                "title": it.get("title",""),
+                "dt": _format_dt(it.get("dt")),
+                "text": txt,
+                "rss_summary": it.get("rss_summary",""),
+                "link": src,
+            }
+        )
+    return out
+
+
 def load_article(url: str) -> dict:
     url = _strip_tracking_params(url)
     candidates = _candidate_urls_for_article(url)
@@ -362,15 +473,11 @@ def load_article(url: str) -> dict:
                 continue
             title, text = _extract_article_text_from_html(html)
             if text and len(text) > 500:
-                summary = ai_summarize(text, title=title, source=host(url)) or ""
                 return {
                     "url": url,
                     "fetched_url": cu,
                     "title": title or "",
                     "text": text,
-                    "summary": summary,
-                    "summary_mode": "ai" if summary else "none",
-                    "excerpt": text[:2000],
                     "ok": True,
                 }
             last_err = "no_text"
@@ -382,9 +489,6 @@ def load_article(url: str) -> dict:
         "fetched_url": "",
         "title": "DPG Media Privacy Gate" if last_err == "privacy_gate" else "",
         "text": "",
-        "summary": "",
-        "summary_mode": "blocked",
-        "excerpt": "",
         "ok": False,
         "error": last_err or "unknown",
     }
