@@ -1,16 +1,30 @@
 import streamlit as st
-from common import fetch_readable_text, collect_items, CATEGORY_FEEDS, find_related_items, openai_summarize, host
+from urllib.parse import urlencode
+
+from common import (
+    fetch_readable_text,
+    collect_items,
+    CATEGORY_FEEDS,
+    find_related_items,
+    openai_summarize,
+    host,
+)
 
 st.set_page_config(page_title="Artikel", page_icon="📰", layout="wide")
 
-url = st.query_params.get("url", "")
 st.markdown("# Artikel")
+
+url = st.query_params.get("url") if hasattr(st, "query_params") else st.experimental_get_query_params().get("url", [""])[0]
+if isinstance(url, list):
+    url = url[0]
+url = (url or "").strip()
+
 if not url:
-    st.info("Geen artikel geselecteerd.")
+    st.error("Geen artikel-URL meegegeven.")
     st.stop()
 
 st.caption(f"Bron: {host(url)}")
-st.write(url)
+st.markdown(url)
 
 title, text = fetch_readable_text(url)
 
@@ -18,56 +32,53 @@ if title:
     st.markdown(f"## {title}")
 
 if text:
-    st.markdown("### Volledige tekst (best-effort)")
+    st.success("Artikeltekst uitgelezen ✅")
     st.write(text)
 else:
     st.warning("Dit artikel kon niet volledig uitgelezen worden (mogelijk JS/consent).")
 
-# Multi-source backgrounder (extra, alleen als tekst ontbreekt of als je wilt)
-with st.expander("🧠 AI-achtergrondstuk (meerdere bronnen)", expanded=True):
-    # collect a bigger pool from several categories to find related coverage
-    pool = []
-    for k in ["Binnenland","Buitenland","Economie","Sport","Show","Net binnen"]:
-        feeds = CATEGORY_FEEDS.get(k, [])
-        items, _ = collect_items(feeds, query=None, max_per_feed=20)
-        pool.extend(items)
+# Multi-source backgrounder (optional)
+with st.expander("🧠 AI-achtergrondstuk (meerdere bronnen)", expanded=False):
+    # gather items from all categories as a pool
+    pool_labels = []
+    for labels in CATEGORY_FEEDS.values():
+        pool_labels.extend(labels)
+    pool_labels = sorted(set(pool_labels))
 
-    related = find_related_items(pool, title or "", max_n=4)
+    items, _ = collect_items(pool_labels, query=None, max_per_feed=10)
+    related = find_related_items(items, title or "", max_n=5)
+
     st.markdown("**Bronnen die ook hierover schrijven:**")
     for it in related:
-        st.markdown(f"- {host(it['link'])}: {it['title']}")
+        st.write(f"- {host(it.get('link',''))}: {it.get('title','')}")
 
     api_key = st.secrets.get("OPENAI_API_KEY", "")
     model = st.secrets.get("OPENAI_MODEL", "gpt-4o-mini")
 
     if st.button("✨ Maak achtergrondstuk", use_container_width=True):
         if not api_key:
-            st.error("AI-samenvatting lukte niet (check OPENAI_API_KEY/OPENAI_MODEL).")
+            st.error("OPENAI_API_KEY ontbreekt in Streamlit Secrets.")
         else:
-            sources_text = ""
-            # include the extracted text if we have it
-            if text:
-                sources_text += f"BRON 0 ({host(url)}):\n{(text[:8000])}\n\n"
-            for i, it in enumerate(related, start=1):
-                t2, txt2 = fetch_readable_text(it["link"])
-                if txt2:
-                    sources_text += f"BRON {i} ({host(it['link'])}):\n{txt2[:6000]}\n\n"
-                else:
-                    sources_text += f"BRON {i} ({host(it['link'])}):\n{it.get('rss_summary','')[:1500]}\n\n"
-
+            # prompt: strong backgrounder, long allowed
+            src_block = "\n".join([f"- {it.get('title','')} ({it.get('link','')})" for it in related[:5]])
+            base_text = (text[:12000] if text else "")
             prompt = f"""Je bent een Nederlandse nieuwsredacteur.
-Schrijf een diepgaand, feitelijk achtergrondstuk (geen bulletpoints) op basis van de bronnen hieronder.
-Structuur:
-- 1 zin lead (nieuwswaardig)
-- 2-4 alinea's context/duiding (wie/wat/waarom)
-- 1 alinea: wat nu / mogelijke gevolgen
-Vermijd letterlijk kopiëren; parafraseer.
-Als bronnen elkaar tegenspreken: benoem dat.
-\n\nBRONNEN:\n{sources_text}
+Schrijf een uitgebreid, helder achtergrondstuk (mag lang zijn) voor een slimme lezer.
+- Begin met 2-3 zinnen lead (wat is er gebeurd / waarom relevant).
+- Daarna context, feiten, betrokken partijen, mogelijke gevolgen.
+- Gebruik kopjes.
+- Geen bullet-spam: vooral lopende tekst.
+- Als de originele artikeltekst ontbreekt, baseer je op de bronlijst hieronder en algemene kennis, maar verzin geen feiten: wees duidelijk als iets onzeker is.
+
+ORIGINELE TEKST (indien beschikbaar):
+{base_text}
+
+BRONLIJST:
+{src_block}
 """
-            out = openai_summarize(model=model, api_key=api_key, prompt=prompt)
-            if not out:
-                st.error("AI-samenvatting lukte niet (check OPENAI_API_KEY/OPENAI_MODEL).")
+            with st.spinner("AI schrijft…"):
+                out = openai_summarize(model=model, api_key=api_key, prompt=prompt)
+            if out:
+                st.markdown(out)
             else:
-                st.success("Klaar ✅")
-                st.write(out)
+                st.error("AI-samenvatting lukte niet (check OPENAI_API_KEY/OPENAI_MODEL).")
