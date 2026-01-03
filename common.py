@@ -1,8 +1,13 @@
+# common.py (RTL via Google News RSS patch)
+# - Adds RTL.nl items via Google News RSS site:rtl.nl queries
+# - Keeps your existing collect_items signature compatible (force_fetch/ai_on)
+# - Merges RTL into existing categories + offers separate RTL pages (see pages/*.py)
+
 import re
 import time
 import hashlib
 from datetime import datetime, timedelta, timezone
-from urllib.parse import urlparse, urlunparse, urlencode, parse_qsl
+from urllib.parse import urlparse, urlunparse, urlencode, parse_qsl, quote_plus
 
 import requests
 import feedparser
@@ -16,18 +21,66 @@ except Exception:
 # ----------------------------
 # FEEDS / CATEGORIES
 # ----------------------------
+def _gn(site_query: str, days: int = 30) -> str:
+    # Google News RSS search (NL)
+    q = f"site:rtl.nl {site_query} when:{days}d".strip()
+    return (
+        "https://news.google.com/rss/search?q="
+        + quote_plus(q)
+        + "&hl=nl&gl=NL&ceid=NL:nl"
+    )
+
 CATEGORY_FEEDS = {
-    "Net binnen": ["nos_binnenland", "nos_buitenland", "nu_algemeen", "ad_home", "rtv_mh"],
-    "Binnenland": ["nos_binnenland", "nu_algemeen", "ad_home", "rtv_mh"],
-    "Buitenland": ["nos_buitenland", "nu_algemeen", "ad_home"],
-    "Show": ["nos_op3", "nu_entertainment", "ad_show", "ad_sterren"],
-    "Lokaal": ["rtv_mh"],
-    "Sport": ["nos_sport", "nos_f1", "nu_sport"],
-    "Tech": ["nos_tech", "nu_tech"],
-    "Opmerkelijk": ["nos_opmerkelijk", "nu_opmerkelijk"],
+    # Existing main buckets (now also include RTL where it makes sense)
+    "Net binnen": [
+        "nos_binnenland", "nos_buitenland", "nu_algemeen", "ad_home", "rtv_mh",
+        "rtl_algemeen",
+    ],
+    "Binnenland": [
+        "nos_binnenland", "nu_algemeen", "ad_home", "rtv_mh",
+        "rtl_binnenland",
+    ],
+    "Buitenland": [
+        "nos_buitenland", "nu_algemeen", "ad_home",
+        "rtl_buitenland",
+    ],
+    "Show": [
+        "nos_op3", "nu_entertainment", "ad_show", "ad_sterren",
+        "rtl_boulevard",
+    ],
+    "Lokaal": [
+        "rtv_mh",
+    ],
+    "Sport": [
+        "nos_sport", "nos_f1", "nu_sport",
+        "rtl_sport",
+    ],
+    "Tech": [
+        "nos_tech", "nu_tech",
+        "rtl_algemeen",
+    ],
+    "Opmerkelijk": [
+        "nos_opmerkelijk", "nu_opmerkelijk",
+        "rtl_algemeen",
+    ],
+
+    # Separate RTL sections (for menu/pages)
+    "RTL Nieuws": ["rtl_nieuws"],
+    "RTL Boulevard": ["rtl_boulevard"],
+    "RTL TV": ["rtl_tv"],
+    "RTL Sport": ["rtl_sport"],
+    "RTL Politiek": ["rtl_politiek"],
+    "RTL Binnenland": ["rtl_binnenland"],
+    "RTL Buitenland": ["rtl_buitenland"],
+    "RTL Economie": ["rtl_economie"],
+    "RTL Lifestyle": ["rtl_lifestyle"],
+    "RTL Uitzendingen": ["rtl_uitzendingen"],
+    "RTL Puzzels": ["rtl_puzzels"],
+    "RTL Algemeen": ["rtl_algemeen"],
 }
 
 FEEDS = {
+    # NOS
     "nos_binnenland": "https://feeds.nos.nl/nosnieuwsbinnenland",
     "nos_buitenland": "https://feeds.nos.nl/nosnieuwsbuitenland",
     "nos_opmerkelijk": "https://feeds.nos.nl/nosnieuwsopmerkelijk",
@@ -35,15 +88,35 @@ FEEDS = {
     "nos_sport": "https://feeds.nos.nl/nossportalgemeen",
     "nos_f1": "https://feeds.nos.nl/nossportformule1",
     "nos_op3": "https://feeds.nos.nl/nosop3",
+
+    # NU
     "nu_algemeen": "https://www.nu.nl/rss/Algemeen",
     "nu_sport": "https://www.nu.nl/rss/Sport",
     "nu_entertainment": "https://www.nu.nl/rss/entertainment",
     "nu_opmerkelijk": "https://www.nu.nl/rss/Opmerkelijk",
     "nu_tech": "https://www.nu.nl/rss/tech-wetenschap",
+
+    # AD
     "ad_home": "https://www.ad.nl/home/rss.xml",
     "ad_show": "https://www.ad.nl/showbytes/rss.xml",
     "ad_sterren": "https://www.ad.nl/sterren/rss.xml",
+
+    # RTV Midden Holland
     "rtv_mh": "https://rtvmiddenholland.nl/feed/",
+
+    # RTL.nl via Google News RSS search
+    "rtl_algemeen": _gn("", days=30),
+    "rtl_nieuws": _gn("nieuws", days=30),
+    "rtl_boulevard": _gn("boulevard", days=30),
+    "rtl_tv": _gn("tv", days=30),
+    "rtl_sport": _gn("sport", days=30),
+    "rtl_politiek": _gn("politiek", days=30),
+    "rtl_binnenland": _gn("binnenland", days=30),
+    "rtl_buitenland": _gn("buitenland", days=30),
+    "rtl_economie": _gn("economie OR geld OR beurs", days=30),
+    "rtl_lifestyle": _gn("lifestyle OR gezondheid OR wonen OR eten", days=30),
+    "rtl_uitzendingen": _gn("uitzendingen OR gemist OR kijken", days=30),
+    "rtl_puzzels": _gn("puzzels OR quiz OR spel", days=30),
 }
 
 # ----------------------------
@@ -62,7 +135,7 @@ _SESSION.headers.update(
 _TIMEOUT = 12
 
 _FEED_CACHE = {}
-_FEED_CACHE_TTL = 60  # seconds
+_FEED_CACHE_TTL = 90  # seconds
 
 
 def clear_feed_caches():
@@ -139,19 +212,6 @@ def _strip_tracking_params(url: str) -> str:
         return url
 
 
-def _tokenize(s: str) -> set[str]:
-    s = (s or "").lower()
-    s = re.sub(r"[^a-z0-9áéíóúàèìòùäëïöüñç\s-]", " ", s)
-    toks = {t for t in re.split(r"\s+", s) if len(t) >= 4}
-    stop = {
-        "live", "video", "update", "vandaag", "gisteren", "deze", "waarom", "maar",
-        "daarom", "ondertussen", "namelijk", "zoals", "wordt", "werden", "heeft",
-        "hebben", "door", "voor", "over", "naar", "niet", "meer", "gaat", "gaan",
-        "nieuws", "bericht", "dit", "dat", "zijn", "waar", "wie", "wanneer"
-    }
-    return {t for t in toks if t not in stop}
-
-
 # ----------------------------
 # RSS COLLECTION
 # ----------------------------
@@ -196,28 +256,29 @@ def collect_items(
     force_fetch: bool = False,
     ai_on: bool = False,
 ):
-    """Backwards-compatible signature (kbm_ui.py expects force_fetch/ai_on)."""
-    # force_fetch/ai_on are currently not used here, but kept for compatibility.
+    # force_fetch/ai_on are present for compatibility with your UI
     items: list[dict] = []
     for label in feed_labels:
         feed_url = FEEDS.get(label)
         if not feed_url:
             continue
         if force_fetch:
-            # crude: bypass cache
             _FEED_CACHE.pop(feed_url, None)
         d = fetch_feed(feed_url)
+
         for entry in (d.entries or [])[:max_per_feed]:
             link = _strip_tracking_params(entry.get("link", "") or "")
             title = _clean_text(entry.get("title", "") or "")
             if not link or not title:
                 continue
+
             dt = _parse_dt(entry)
             summary = entry.get("summary", "") or entry.get("description", "") or ""
             summary_txt = (
                 _clean_text(BeautifulSoup(summary, "lxml").get_text(" ", strip=True)) if summary else ""
             )
             img = _extract_image_from_entry(entry)
+
             items.append(
                 {
                     "title": title,
@@ -226,6 +287,7 @@ def collect_items(
                     "rss_summary": summary_txt,
                     "img": img,
                     "source": host(link),
+                    "feed_label": label,
                 }
             )
 
@@ -239,250 +301,3 @@ def collect_items(
 
     items.sort(key=lambda x: x.get("dt") or datetime(1970, 1, 1, tzinfo=timezone.utc), reverse=True)
     return items, {"count": len(items)}
-
-
-# ----------------------------
-# ARTICLE FETCH + TEXT EXTRACTION
-# ----------------------------
-def _looks_like_privacy_gate(html: str) -> bool:
-    h = (html or "").lower()
-    return ("dpg media privacy gate" in h) or ("privacy gate" in h and "dpg" in h) or (
-        "stg.start" in h and "cookie" in h
-    )
-
-
-def _candidate_urls_for_article(url: str) -> list[str]:
-    url = _strip_tracking_params(url)
-    u = urlparse(url)
-    candidates = [url]
-
-    if u.netloc.endswith("ad.nl"):
-        base = urlunparse((u.scheme, u.netloc, u.path.rstrip("/") + "/", "", "", ""))
-        candidates.append(base + "amp/")
-        candidates.append(base + "print/")
-        candidates.append(
-            urlunparse((u.scheme, u.netloc, u.path, u.params, urlencode([("output", "1")]), u.fragment))
-        )
-
-    if u.netloc.endswith("nu.nl"):
-        q = dict(parse_qsl(u.query, keep_blank_values=True))
-        q.setdefault("output", "1")
-        candidates.append(
-            urlunparse((u.scheme, u.netloc, u.path, u.params, urlencode(list(q.items())), u.fragment))
-        )
-
-    seen = set()
-    out = []
-    for c in candidates:
-        if c not in seen:
-            seen.add(c)
-            out.append(c)
-    return out
-
-
-def _fetch_html(url: str) -> str:
-    r = _SESSION.get(url, timeout=_TIMEOUT, allow_redirects=True)
-    r.raise_for_status()
-    r.encoding = r.encoding or "utf-8"
-    return r.text
-
-
-def _extract_article_text_from_html(html: str) -> tuple[str, str]:
-    soup = BeautifulSoup(html, "lxml")
-
-    title = ""
-    if soup.title and soup.title.get_text(strip=True):
-        title = _clean_text(soup.title.get_text(" ", strip=True))
-    ogt = soup.find("meta", property="og:title")
-    if ogt and ogt.get("content"):
-        title = _clean_text(ogt["content"])
-
-    container = soup.find("article")
-    if not container:
-        container = soup.find("main") or soup.body
-
-    for tag in container.find_all(["script", "style", "noscript", "svg", "form", "iframe"]):
-        tag.decompose()
-
-    paras = []
-    for p in container.find_all(["p", "h2", "li"]):
-        t = _clean_text(p.get_text(" ", strip=True))
-        if t and len(t) >= 30:
-            paras.append(t)
-
-    text = "\n\n".join(paras)
-    text = re.sub(r"\n{3,}", "\n\n", text).strip()
-    return title, text
-
-
-# ----------------------------
-# AI (OpenAI) - optional
-# ----------------------------
-def _openai_client():
-    try:
-        from openai import OpenAI
-    except Exception:
-        return None
-    try:
-        import streamlit as st
-        api_key = (st.secrets.get("OPENAI_API_KEY") or "").strip()
-        if not api_key:
-            return None
-        return OpenAI(api_key=api_key)
-    except Exception:
-        return None
-
-
-def ai_backgrounder(main_title: str, main_source: str, snippets: list[dict]) -> str | None:
-    client = _openai_client()
-    if not client:
-        return None
-
-    try:
-        import streamlit as st
-        model = (st.secrets.get("OPENAI_MODEL") or "").strip() or "gpt-4o-mini"
-    except Exception:
-        model = "gpt-4o-mini"
-
-    lines = []
-    for i, s in enumerate(snippets, 1):
-        lines.append(f"[{i}] {s.get('source','')} • {s.get('title','')} • {s.get('dt','')}")
-        body = (s.get("text") or s.get("rss_summary") or "").strip()
-        if len(body) > 6000:
-            body = body[:6000] + "…"
-        lines.append(body)
-        lines.append("")
-
-    evidence = "\n".join(lines).strip()
-
-    prompt = f"""Schrijf een Nederlandstalig achtergrondstuk op basis van meerdere bronnen (hieronder).
-Belangrijk:
-- Gebruik alleen informatie die in de bron-snippets staat. Geen aannames.
-- Stijl: rustige nieuws-stijl, helder en feitelijk, met context.
-- Structuur:
-  1) Lead (2–3 zinnen)
-  2) Wat weten we zeker (details)
-  3) Context & achtergrond
-  4) Wat gebeurt er nu / wat volgt
-  5) Kernpunten (7–12 bullets)
-- Lengte: zo lang als nodig.
-
-Hoofd-titel: {main_title}
-Hoofd-bron: {main_source}
-
-BRON-SNIPPETS:
-{evidence}
-"""
-
-    try:
-        resp = client.responses.create(model=model, input=prompt)
-        out = getattr(resp, "output_text", None)
-        if out:
-            return out.strip()
-    except Exception:
-        return None
-    return None
-
-
-def _format_dt(dt: datetime | None) -> str:
-    if not dt:
-        return ""
-    try:
-        return dt.astimezone().strftime("%d-%m %H:%M")
-    except Exception:
-        return ""
-
-
-def build_related_snippets(main_url: str, main_title: str, window_hours: int = 24, k: int = 6) -> list[dict]:
-    main_tokens = _tokenize(main_title)
-    if not main_tokens:
-        return []
-
-    now = datetime.now(timezone.utc)
-    all_labels = list(FEEDS.keys())
-
-    items = []
-    for label in all_labels:
-        (its, _) = collect_items([label], query=None, max_per_feed=25, force_fetch=False, ai_on=False)
-        for it in its:
-            if not it.get("title") or not it.get("link"):
-                continue
-            if it["link"] == main_url:
-                continue
-            dt = it.get("dt")
-            if dt and dt < now - timedelta(hours=window_hours):
-                continue
-            tks = _tokenize(it["title"])
-            inter = len(main_tokens.intersection(tks))
-            if inter >= 2:
-                it["_score"] = inter
-                items.append(it)
-
-    items.sort(
-        key=lambda x: (x.get("_score", 0), x.get("dt") or datetime(1970, 1, 1, tzinfo=timezone.utc)),
-        reverse=True,
-    )
-
-    picked = []
-    for it in items:
-        h = it.get("source") or host(it.get("link", ""))
-        if sum(1 for p in picked if (p.get("source") or "") == h) >= 2:
-            continue
-        picked.append(it)
-        if len(picked) >= k:
-            break
-
-    out = []
-    for it in picked:
-        src = it.get("link", "")
-        txt = ""
-        try:
-            for cu in _candidate_urls_for_article(src):
-                html = _fetch_html(cu)
-                if _looks_like_privacy_gate(html):
-                    continue
-                _, txt = _extract_article_text_from_html(html)
-                if txt and len(txt) > 400:
-                    break
-        except Exception:
-            txt = ""
-
-        out.append(
-            {
-                "source": it.get("source") or host(src),
-                "title": it.get("title", ""),
-                "dt": _format_dt(it.get("dt")),
-                "text": txt,
-                "rss_summary": it.get("rss_summary", ""),
-                "link": src,
-            }
-        )
-    return out
-
-
-def load_article(url: str) -> dict:
-    url = _strip_tracking_params(url)
-    candidates = _candidate_urls_for_article(url)
-
-    last_err = None
-    for cu in candidates:
-        try:
-            html = _fetch_html(cu)
-            if _looks_like_privacy_gate(html):
-                last_err = "privacy_gate"
-                continue
-            title, text = _extract_article_text_from_html(html)
-            if text and len(text) > 500:
-                return {"url": url, "fetched_url": cu, "title": title or "", "text": text, "ok": True}
-            last_err = "no_text"
-        except Exception as e:
-            last_err = str(e)
-
-    return {
-        "url": url,
-        "fetched_url": "",
-        "title": "DPG Media Privacy Gate" if last_err == "privacy_gate" else "",
-        "text": "",
-        "ok": False,
-        "error": last_err or "unknown",
-    }
