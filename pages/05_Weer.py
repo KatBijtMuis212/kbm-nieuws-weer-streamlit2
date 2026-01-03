@@ -215,7 +215,38 @@ with colL:
         st.markdown("<div class='kbm-card'>", unsafe_allow_html=True)
         st.markdown(f"#### Buienradar (RainViewer) • {place_name}")
         rv_url = f"https://www.rainviewer.com/map.html?loc={lat:.4f},{lon:.4f},9&oFa=0&oC=0&oU=0&oCS=1&oF=0&oAP=0&c=3&o=83&lm=1&layer=radar&sm=1"
-        st.components.v1.iframe(rv_url, height=560, scrolling=True)
+        label_html = f"""
+<div style="position:relative; width:100%; height:560px;">
+  <iframe
+    src="{rv_url}"
+    style="width:100%; height:100%; border:0; border-radius:12px;">
+  </iframe>
+
+  <div style="
+    position:absolute;
+    top:18px;
+    left:18px;
+    background:white;
+    padding:10px 14px;
+    border-radius:12px;
+    box-shadow:0 8px 24px rgba(0,0,0,.25);
+    font-size:14px;
+    line-height:1.25;
+    z-index:9999;
+    min-width:160px;
+  ">
+    <div style="font-weight:700; font-size:15px;">
+      {wx_emoji(code)} {place.get('name')}
+    </div>
+    <div style="opacity:.85;">
+      {temp if temp is not None else "—"}°C • wind {wind if wind is not None else "—"} km/u
+    </div>
+  </div>
+</div>
+"""
+
+st.components.v1.html(label_html, height=580)
+
         st.markdown("</div>", unsafe_allow_html=True)
     with t2:
     st.markdown("<div class='kbm-card'>", unsafe_allow_html=True)
