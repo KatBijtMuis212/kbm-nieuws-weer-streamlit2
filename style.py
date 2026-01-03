@@ -1,57 +1,94 @@
-def inject_css(st):
-    BR6_BLUE = "#214c6e"
-    st.markdown(f"""
+import streamlit as st
+
+BR6_BLUE = "#214c6e"
+
+
+def inject_css(st_obj=st):
+    st_obj.markdown(
+        f"""
 <style>
-:root {{
-  --kbm-blue: {BR6_BLUE};
-  --kbm-bg: #f4f7fb;
-  --kbm-card: #ffffff;
-  --kbm-muted: #6b7280;
-  --kbm-border: rgba(0,0,0,.08);
+/* Base */
+html, body, [class*="css"] {{
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
 }}
-.stApp {{
-  background: radial-gradient(1200px 600px at 10% 0%, #cfe7ff 0%, var(--kbm-bg) 55%, #eef4ff 100%);
-}}
+a {{ color: {BR6_BLUE}; text-decoration: none; }}
+a:hover {{ text-decoration: underline; }}
+
 .kbm-topbar {{
-  border: 1px solid var(--kbm-border);
-  background: rgba(255,255,255,.75);
-  backdrop-filter: blur(10px);
-  border-radius: 18px;
-  padding: 14px 16px;
-  margin-bottom: 12px;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: rgba(244,247,251,.92);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid rgba(0,0,0,.06);
+  padding: 12px 8px;
+  margin-bottom: 10px;
 }}
 .kbm-brand {{
-  display:flex;
-  gap:12px;
-  align-items:center;
+  display: flex;
+  gap: 12px;
+  align-items: center;
 }}
-.kbm-brand img {{ height: 44px; width:auto; }}
-.kbm-title {{ font-size: 22px; font-weight: 900; margin:0; }}
-.kbm-sub {{ color: var(--kbm-muted); margin-top: 2px; }}
-.kbm-chip {{
-  display:inline-flex;
-  align-items:center;
-  gap:8px;
-  font-size: 12px;
-  padding: 6px 10px;
-  border-radius: 999px;
-  background: rgba(33,76,110,.10);
-  color: var(--kbm-blue);
+.kbm-brand img {{
+  width: 64px;
+  height: auto;
+  border-radius: 10px;
+}}
+.kbm-title {{
   font-weight: 900;
-  border: 1px solid rgba(33,76,110,.15);
+  font-size: 22px;
+  line-height: 1.1;
 }}
+.kbm-sub {{
+  color: rgba(15,23,42,.70);
+  font-size: 13px;
+  margin-top: 2px;
+}}
+
 .kbm-card {{
-  border: 1px solid var(--kbm-border);
-  background: var(--kbm-card);
+  border: 1px solid rgba(0,0,0,.08);
+  background: #fff;
   border-radius: 18px;
-  padding: 14px;
+  padding: 14px 14px;
+  box-shadow: 0 8px 22px rgba(0,0,0,.06);
 }}
-.kbm-meta {{ color: var(--kbm-muted); font-size: 12px; }}
-/* input rounding */
-div[data-baseweb="input"] input, div[data-baseweb="select"] > div {{
-  border-radius: 12px !important;
+.kbm-meta {{
+  color: rgba(15,23,42,.65);
+  font-size: 12px;
+  margin-top: 6px;
 }}
-#MainMenu {{visibility:hidden;}}
-footer {{visibility:hidden;}}
+
+/* Thumbnail rows (mobile friendly) */
+.kbm-thumbs {{ margin-top: 10px; display: flex; flex-direction: column; gap: 10px; }}
+.kbm-thumbrow{{
+  display:flex; gap:12px; align-items:flex-start;
+  padding:10px; border-radius:14px;
+  background:rgba(0,0,0,.06);
+}}
+.kbm-thumbimg{{
+  width:86px; height:86px; border-radius:12px;
+  object-fit:cover;
+  flex:0 0 86px;
+  background:#e5e7eb;
+  box-shadow:0 6px 16px rgba(0,0,0,.18);
+}}
+.kbm-thumbtext{{ flex:1 1 auto; min-width:0; }}
+.kbm-thumbtitle{{
+  font-weight:800; line-height:1.15;
+  display:-webkit-box;
+  -webkit-line-clamp:2;
+  -webkit-box-orient:vertical;
+  overflow:hidden;
+  margin:0;
+}}
+.kbm-thumbmeta{{ opacity:.75; font-size:12px; margin-top:6px; }}
+
+@media (max-width: 768px){{
+  .kbm-brand img {{ width: 56px; }}
+  .kbm-thumbimg{{ width:78px; height:78px; flex-basis:78px; }}
+  .kbm-thumbrow{{ padding:9px; }}
+}}
 </style>
-""", unsafe_allow_html=True)
+""",
+        unsafe_allow_html=True,
+    )
