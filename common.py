@@ -3,14 +3,16 @@ import hashlib
 import re
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse, unquote
+
 import feedparser
 import requests
 from bs4 import BeautifulSoup
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) KbMStreamlit/1.0"
+HEADERS = {"User-Agent": UA, "Accept-Language": "nl-NL,nl;q=0.9,en;q=0.8"}
 
 # ----------------------------
-# CACHE
+# CACHE (fast + safe)
 # ----------------------------
 _FEED_CACHE = {}
 _CACHE_TTL = 180  # seconds
@@ -71,9 +73,6 @@ FEEDS = {
     "rtl_boulevard": "https://news.google.com/rss/search?q=site:rtl.nl%20Boulevard&hl=nl&gl=NL&ceid=NL:nl",
 }
 
-# ----------------------------
-# CATEGORIES (homepage blocks + pages)
-# ----------------------------
 CATEGORY_FEEDS = {
     "Net binnen": ["nos_binnenland", "nu_algemeen", "rtvmh", "rtl_algemeen"],
     "Binnenland": ["nos_binnenland", "nu_algemeen", "ad_home", "rtl_binnenland"],
@@ -86,17 +85,11 @@ CATEGORY_FEEDS = {
     "Economie": ["nos_economie", "nu_economie", "ad_geld", "rtl_economie"],
 }
 
-# ----------------------------
-# Helpers
-# ----------------------------
 def host(url: str) -> str:
     try:
         if not url:
             return ""
-        u = url
-        if "news.google.com" in u:
-            u = resolve_google_news_url(u)
-        return urlparse(u).netloc.replace("www.", "")
+        return urlparse(url).netloc.replace("www.", "")
     except Exception:
         return ""
 
@@ -118,55 +111,44 @@ def item_id(item: dict) -> str:
     return hashlib.sha1(base).hexdigest()[:16]
 
 def resolve_google_news_url(gn_url: str) -> str:
-    """Resolve Google News RSS 'articles/...' links to the original publisher URL (best-effort)."""
+    """Resolve Google News RSS wrapper to original URL (fast best-effort)."""
     try:
         if not gn_url or "news.google.com" not in gn_url:
             return gn_url
-
+        # Some wrappers contain &url=...
         m = re.search(r"[?&]url=([^&\"']+)", gn_url)
         if m:
             return unquote(m.group(1))
 
-        headers = {"User-Agent": UA, "Accept-Language": "nl-NL,nl;q=0.9,en;q=0.8"}
-        r = requests.get(gn_url, headers=headers, timeout=10)
+        r = requests.get(gn_url, headers=HEADERS, timeout=8)
         html = r.text or ""
-
+        m = re.search(r"[?&]url=([^&\"']+)", html)
+        if m:
+            return unquote(m.group(1))
+        # canonical often contains url=
         m = re.search(r'<link[^>]+rel="canonical"[^>]+href="([^"]+)"', html)
         if m and m.group(1):
             cand = m.group(1)
             m2 = re.search(r"[?&]url=([^&\"']+)", cand)
             if m2:
                 return unquote(m2.group(1))
-
-        m = re.search(r"[?&]url=([^&\"']+)", html)
-        if m:
-            return unquote(m.group(1))
-
-        m = re.search(r'data-n-au="([^"]+)"', html)
-        if m and m.group(1):
-            return unquote(m.group(1))
     except Exception:
         pass
     return gn_url
 
 def _first_image_from_entry(entry) -> str | None:
-    # media:content, enclosure, image in summary
     try:
-        if "media_content" in entry:
-            mc = entry.get("media_content") or []
-            if mc and isinstance(mc, list) and mc[0].get("url"):
-                return mc[0]["url"]
-        if "enclosures" in entry:
-            enc = entry.get("enclosures") or []
-            for e in enc:
-                if (e.get("type","").startswith("image") or e.get("type","") == "") and e.get("href"):
-                    return e["href"]
-        # some feeds store as links
+        mc = entry.get("media_content") or []
+        if mc and isinstance(mc, list) and mc[0].get("url"):
+            return mc[0]["url"]
+        enc = entry.get("enclosures") or []
+        for e in enc:
+            if e.get("href") and (e.get("type","").startswith("image") or e.get("type","")== ""):
+                return e["href"]
         links = entry.get("links") or []
         for l in links:
             if l.get("type","").startswith("image") and l.get("href"):
                 return l["href"]
-        # try in summary html
         summ = entry.get("summary","") or ""
         m = re.search(r'<img[^>]+src="([^"]+)"', summ)
         if m:
@@ -176,13 +158,26 @@ def _first_image_from_entry(entry) -> str | None:
     return None
 
 def _fetch_feed(url: str):
+    """SAFE fetch: requests with timeout -> feedparser.parse(bytes). No hanging."""
     now = time.time()
     cached = _FEED_CACHE.get(url)
     if cached and now - cached["t"] < _CACHE_TTL:
         return cached["d"]
-    d = feedparser.parse(url)
-    _FEED_CACHE[url] = {"t": now, "d": d}
-    return d
+
+    # If fetch fails, fall back to old cache (even if expired) to keep app responsive.
+    stale = cached["d"] if cached else None
+
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=8)
+        content = r.content if r.ok else b""
+        d = feedparser.parse(content)
+        _FEED_CACHE[url] = {"t": now, "d": d}
+        return d
+    except Exception:
+        if stale is not None:
+            return stale
+        # last resort: empty feed structure
+        return feedparser.parse(b"")
 
 def collect_items(feed_labels, query=None, max_per_feed=25, **_):
     items = []
@@ -191,63 +186,55 @@ def collect_items(feed_labels, query=None, max_per_feed=25, **_):
         if not url:
             continue
         feed = _fetch_feed(url)
-        for entry in feed.entries[:max_per_feed]:
+        for entry in (feed.entries or [])[:max_per_feed]:
             title = (entry.get("title") or "").strip()
             link = (entry.get("link") or "").strip()
             if not title or not link:
                 continue
+
+            # resolve google news wrappers early
+            if "news.google.com" in link:
+                link = resolve_google_news_url(link)
+
             dt = None
             if getattr(entry, "published_parsed", None):
                 dt = datetime.fromtimestamp(time.mktime(entry.published_parsed), tz=timezone.utc)
-            img = _first_image_from_entry(entry)
-            # resolve google news wrapper early so article page can use it
-            if "news.google.com" in link:
-                link = resolve_google_news_url(link)
+
             items.append({
                 "title": title,
                 "link": link,
                 "dt": dt,
                 "rss_summary": (entry.get("summary") or "").strip(),
-                "img": img,
+                "img": _first_image_from_entry(entry),
                 "source_label": label,
             })
+
     if query:
         q = query.lower()
         items = [x for x in items if q in (x["title"] + " " + (x.get("rss_summary") or "")).lower()]
+
     items.sort(key=lambda x: x["dt"] or datetime(1970,1,1,tzinfo=timezone.utc), reverse=True)
     return items, {}
 
-# ----------------------------
-# Article extraction (best-effort, no bypass)
-# ----------------------------
+# -------- Article extraction (best-effort, no bypass) --------
 def fetch_readable_text(url: str) -> tuple[str, str]:
-    """Return (title, text). Best effort with requests+bs4.
-    If site requires JS/consent, may return empty text.
-    """
     try:
-        headers = {"User-Agent": UA, "Accept-Language": "nl-NL,nl;q=0.9,en;q=0.8"}
-        r = requests.get(url, headers=headers, timeout=12)
+        r = requests.get(url, headers=HEADERS, timeout=12)
         html = r.text or ""
         soup = BeautifulSoup(html, "lxml")
-        title = ""
-        if soup.title and soup.title.string:
-            title = soup.title.string.strip()
-        # common article containers
+        title = (soup.title.string.strip() if soup.title and soup.title.string else "")
         candidates = soup.select("article") or soup.select("main") or []
         text_parts = []
         for c in candidates[:2]:
-            ps = c.select("p")
-            for p in ps:
+            for p in c.select("p"):
                 t = p.get_text(" ", strip=True)
                 if len(t) > 40:
                     text_parts.append(t)
-        text = "\n\n".join(text_parts).strip()
-        return title, text
+        return title, "\n\n".join(text_parts).strip()
     except Exception:
         return "", ""
 
 def find_related_items(all_items: list[dict], title: str, max_n: int = 3) -> list[dict]:
-    """Very simple related matcher: overlap of keywords."""
     words = [w.lower() for w in re.findall(r"[A-Za-zÀ-ÿ0-9]{4,}", title or "")]
     if not words:
         return []
@@ -259,8 +246,7 @@ def find_related_items(all_items: list[dict], title: str, max_n: int = 3) -> lis
         if score:
             scored.append((score, it))
     scored.sort(key=lambda x: x[0], reverse=True)
-    out = []
-    seen = set()
+    out, seen = [], set()
     for _, it in scored:
         if it.get("link") in seen:
             continue
@@ -270,11 +256,8 @@ def find_related_items(all_items: list[dict], title: str, max_n: int = 3) -> lis
             break
     return out
 
-# ----------------------------
-# OpenAI (Responses API) — optional
-# ----------------------------
+# -------- OpenAI (optional) --------
 def openai_summarize(model: str, api_key: str, prompt: str) -> str:
-    """Call OpenAI Responses API. Requires OPENAI_API_KEY in Streamlit secrets."""
     if not api_key:
         return ""
     try:
@@ -284,7 +267,6 @@ def openai_summarize(model: str, api_key: str, prompt: str) -> str:
         if resp.status_code >= 300:
             return ""
         data = resp.json()
-        # Responses API: output text is in output[0].content[0].text for many cases
         out = []
         for o in data.get("output", []):
             for c in o.get("content", []):
