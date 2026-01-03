@@ -230,8 +230,12 @@ with colL:
     with t3:
         st.markdown("<div class='kbm-card'>", unsafe_allow_html=True)
         st.markdown("#### Tekstueel weerbericht (KNMI • best effort)")
-        txt = knmi_text()
-        st.write(txt if txt else "—")
+    txt = knmi_text()
+        if txt:
+        st.markdown(txt)
+    else:
+        st.info("KNMI-tekst kon niet netjes worden opgehaald (site-layout veranderd).")
+
         st.markdown("</div>", unsafe_allow_html=True)
 
 with colR:
