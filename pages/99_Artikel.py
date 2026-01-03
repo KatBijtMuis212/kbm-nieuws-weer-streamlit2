@@ -17,14 +17,11 @@ if not url:
     st.info("Geen URL meegegeven. Ga terug en open een bericht via 🔎 Open.")
     st.stop()
 
-with st.spinner("Artikel ophalen & AI-samenvatten…"):
+with st.spinner("Artikel ophalen & (AI) samenvatten…"):
     it = load_article(url)
 
-st.markdown(f"### {it.get('title') or 'Bericht'}")
+st.markdown(f"## {it.get('title') or 'Bericht'}")
 st.caption(host(url) + (f" • samenvatting: {it.get('summary_mode','')}" if it.get("summary_mode") else ""))
-
-if it.get("img"):
-    st.image(it["img"], use_container_width=True)
 
 if it.get("summary"):
     st.markdown(it["summary"])
@@ -32,7 +29,8 @@ else:
     st.warning("Kon geen samenvatting maken (site blokkeert of layout onbekend).")
 
 if it.get("excerpt"):
-    with st.expander("Korte preview", expanded=False):
+    with st.expander("Korte preview (ruw)", expanded=False):
         st.write(it["excerpt"])
 
+st.divider()
 st.markdown(f"[Open origineel artikel]({url})")
