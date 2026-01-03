@@ -1,3 +1,4 @@
+# kbm_ui.py — tiny safety: avoid external link in preview + unique keys (stable)
 import streamlit as st
 from common import CATEGORY_FEEDS, collect_items, within_hours, host, item_id, pretty_dt
 
@@ -5,7 +6,8 @@ def article_url(src_url: str) -> str:
     return f"/Artikel?url={src_url}"
 
 def add_bookmark(it: dict):
-    st.session_state.setdefault("bookmarks", [])
+    if "bookmarks" not in st.session_state:
+        st.session_state.bookmarks = []
     ids = {b.get("id") for b in st.session_state.bookmarks}
     if it.get("id") in ids:
         return
@@ -16,14 +18,14 @@ def add_bookmark(it: dict):
         "dt": it.get("dt"),
     })
 
-def render_item_preview(it: dict, key_prefix: str):
+def render_item_preview(it: dict, key_prefix: str = ""):
     cols = st.columns([0.62, 0.38], gap="small")
     with cols[0]:
         st.caption(f"{host(it.get('link',''))} • {pretty_dt(it.get('dt'))}")
     with cols[1]:
         b1, b2 = st.columns(2, gap="small")
         with b1:
-            if st.button("⭐ Lees later", key=f"{key_prefix}__bm", use_container_width=True):
+            if st.button("⭐", key=f"{key_prefix}bm_{it['id']}", use_container_width=True):
                 add_bookmark(it)
                 st.toast("Toegevoegd aan lees later ⭐")
         with b2:
@@ -33,23 +35,24 @@ def render_item_preview(it: dict, key_prefix: str):
         st.image(it["img"], use_container_width=True)
 
     if it.get("rss_summary"):
-        st.markdown("**Preview:**")
+        st.markdown("**Korte preview (RSS):**")
         st.write(it["rss_summary"])
 
-def render_section(cat_name: str, hours_limit: int | None, query: str | None,
-                   max_items: int = 60, thumbs_n: int = 4):
+    # No auto-external link here; keep everything in-app
+
+def render_section(cat_name: str, hours_limit: int = None, query: str = None, max_items: int = 40, thumbs_n: int = 4):
     feed_labels = CATEGORY_FEEDS.get(cat_name, [])
-    items, _ = collect_items(feed_labels, query=query, max_per_feed=30, force_fetch=False, ai_on=False)
+    items, _ = collect_items(feed_labels, query=query, max_per_feed=25)
 
     if hours_limit is not None:
-        items = [x for x in items if within_hours(x.get("dt"), hours_limit)]
+        items = [x for x in items if within_hours(x.get("dt"), int(hours_limit))]
 
     if not items:
         st.info(f"Geen berichten voor **{cat_name}** (nu).")
         return
 
     for it in items:
-        it["id"] = it.get("id") or item_id(it)
+        it["id"] = item_id(it)
 
     hero = next((x for x in items if x.get("img")), items[0])
     rest = [x for x in items if x is not hero]
@@ -66,12 +69,13 @@ def render_section(cat_name: str, hours_limit: int | None, query: str | None,
             st.image(hero["img"], use_container_width=True)
         st.markdown(f"#### <a href='{article_url(hero['link'])}'>{hero['title']}</a>", unsafe_allow_html=True)
         st.markdown(f"<div class='kbm-meta'>{host(hero['link'])} • {pretty_dt(hero.get('dt'))}</div>", unsafe_allow_html=True)
+        st.link_button("🔎 Open in KbM", url=article_url(hero["link"]), use_container_width=True)
         with st.expander("Lees preview", expanded=False):
-            render_item_preview(hero, key_prefix=f"{cat_name}__hero__{hero['id']}")
+            render_item_preview(hero, key_prefix=f"{cat_name}_hero_")
 
     with colB:
         st.markdown("<div class='kbm-thumbs'>", unsafe_allow_html=True)
-        for i, t in enumerate(thumbs):
+        for t in thumbs:
             dt_small = t["dt"].astimezone().strftime("%H:%M") if t.get("dt") else ""
             meta2 = f"{dt_small}{' • ' if dt_small else ''}{host(t['link'])}"
             img = t.get("img") or ""
@@ -89,7 +93,7 @@ def render_section(cat_name: str, hours_limit: int | None, query: str | None,
                 unsafe_allow_html=True,
             )
             with st.expander("Lees preview", expanded=False):
-                render_item_preview(t, key_prefix=f"{cat_name}__thumb{i}__{t['id']}")
+                render_item_preview(t, key_prefix=f"{cat_name}_{t['id']}_")
         st.markdown("</div>", unsafe_allow_html=True)
 
     if more:
