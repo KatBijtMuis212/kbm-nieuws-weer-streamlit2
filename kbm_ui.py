@@ -2,7 +2,6 @@ import streamlit as st
 from common import CATEGORY_FEEDS, collect_items, within_hours, host, item_id, pretty_dt
 
 def article_url(src_url: str) -> str:
-    # Streamlit pages routing (Artikel page expects ?url=...)
     return f"/Artikel?url={src_url}"
 
 def add_bookmark(it: dict):
@@ -18,7 +17,6 @@ def add_bookmark(it: dict):
     })
 
 def render_item_preview(it: dict, key_prefix: str):
-    """Preview block with UNIQUE widget keys (prevents DuplicateElementKey)."""
     cols = st.columns([0.62, 0.38], gap="small")
     with cols[0]:
         st.caption(f"{host(it.get('link',''))} • {pretty_dt(it.get('dt'))}")
@@ -39,15 +37,15 @@ def render_item_preview(it: dict, key_prefix: str):
         st.write(it["rss_summary"])
 
 def render_section(cat_name: str, hours_limit: int | None, query: str | None,
-                   max_items: int = 40, thumbs_n: int = 4):
+                   max_items: int = 60, thumbs_n: int = 4):
     feed_labels = CATEGORY_FEEDS.get(cat_name, [])
-    items, _ = collect_items(feed_labels, query=query, max_per_feed=25, force_fetch=False, ai_on=False)
+    items, _ = collect_items(feed_labels, query=query, max_per_feed=30, force_fetch=False, ai_on=False)
 
     if hours_limit is not None:
         items = [x for x in items if within_hours(x.get("dt"), hours_limit)]
 
     if not items:
-        st.info(f"Geen berichten voor **{cat_name}** (nu)." )
+        st.info(f"Geen berichten voor **{cat_name}** (nu).")
         return
 
     for it in items:
@@ -68,9 +66,7 @@ def render_section(cat_name: str, hours_limit: int | None, query: str | None,
             st.image(hero["img"], use_container_width=True)
         st.markdown(f"#### <a href='{article_url(hero['link'])}'>{hero['title']}</a>", unsafe_allow_html=True)
         st.markdown(f"<div class='kbm-meta'>{host(hero['link'])} • {pretty_dt(hero.get('dt'))}</div>", unsafe_allow_html=True)
-
         with st.expander("Lees preview", expanded=False):
-            # UNIQUE prefix includes category + role + item id
             render_item_preview(hero, key_prefix=f"{cat_name}__hero__{hero['id']}")
 
     with colB:
@@ -98,7 +94,7 @@ def render_section(cat_name: str, hours_limit: int | None, query: str | None,
 
     if more:
         with st.expander("Meer berichten", expanded=False):
-            for j, it in enumerate(more):
+            for it in more:
                 st.markdown(f"- [{it['title']}]({article_url(it['link'])})")
                 st.caption(f"{host(it.get('link',''))} • {pretty_dt(it.get('dt'))}")
 
