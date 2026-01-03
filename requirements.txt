@@ -4,5 +4,5 @@ feedparser>=6.0.11
 beautifulsoup4>=4.12
 lxml>=5.0
 streamlit-autorefresh
-python-dateutil>=2.9
 openai>=1.0.0
+python-dateutil>=2.9
