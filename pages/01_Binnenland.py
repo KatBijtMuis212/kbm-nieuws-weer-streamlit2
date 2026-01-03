@@ -1,10 +1,10 @@
 import streamlit as st
 from kbm_ui import render_section
 
-st.set_page_config(page_title="Binnenland", page_icon="🗞️", layout="wide")
-st.markdown("# Binnenland")
+st.set_page_config(page_title="Buitenland", page_icon="🗞️", layout="wide")
+st.markdown("# Buitenland")
 
-query = st.text_input("Zoekterm (optioneel)", placeholder="bijv. Huizen, politiek, muziek…").strip() or None
+query = st.text_input("Zoekterm (optioneel)", placeholder="bijv. Oekraïne, EU, VS…").strip() or None
 hours = st.slider("Max uren oud (hard filter)", 1, 24, 4, 1)
 
-render_section("Binnenland", hours_limit=hours, query=query, max_items=120, thumbs_n=6)
+render_section("Buitenland", hours_limit=hours, query=query, max_items=120, thumbs_n=6)
