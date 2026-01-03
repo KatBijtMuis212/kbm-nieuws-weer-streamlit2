@@ -1,8 +1,10 @@
 import streamlit as st
 from common import CATEGORY_FEEDS, collect_items, within_hours, host, item_id, pretty_dt
 
+
 def article_url(src_url: str) -> str:
     return f"/Artikel?url={src_url}"
+
 
 def add_bookmark(it: dict):
     if "bookmarks" not in st.session_state:
@@ -10,12 +12,16 @@ def add_bookmark(it: dict):
     ids = {b.get("id") for b in st.session_state.bookmarks}
     if it.get("id") in ids:
         return
-    st.session_state.bookmarks.insert(0, {
-        "id": it.get("id"),
-        "title": it.get("title"),
-        "link": it.get("link"),
-        "dt": it.get("dt"),
-    })
+    st.session_state.bookmarks.insert(
+        0,
+        {
+            "id": it.get("id"),
+            "title": it.get("title"),
+            "link": it.get("link"),
+            "dt": it.get("dt"),
+        },
+    )
+
 
 def render_item_preview(it: dict):
     cols = st.columns([0.62, 0.38], gap="small")
@@ -28,7 +34,7 @@ def render_item_preview(it: dict):
                 add_bookmark(it)
                 st.toast("Toegevoegd aan lees later ⭐")
         with b2:
-            st.link_button("🔎 Open", url=article_url(it.get("link","")), use_container_width=True)
+            st.link_button("🔎 Open", url=article_url(it.get("link", "")), use_container_width=True)
 
     if it.get("img"):
         st.image(it["img"], use_container_width=True)
@@ -37,13 +43,20 @@ def render_item_preview(it: dict):
         st.markdown("**Korte preview (RSS):**")
         st.write(it["rss_summary"])
 
-    # Optional external source link (kept, but not the main action)
+    # Optional external source link (secondary)
     st.markdown(
         f"<div class='kbm-meta'><a href='{it.get('link','')}' target='_blank' rel='noopener'>Open origineel artikel</a></div>",
         unsafe_allow_html=True,
     )
 
-def render_section(cat_name: str, hours_limit: int | None, query: str | None, max_items: int = 40, thumbs_n: int = 4):
+
+def render_section(
+    cat_name: str,
+    hours_limit: int | None,
+    query: str | None,
+    max_items: int = 40,
+    thumbs_n: int = 4,
+):
     feed_labels = CATEGORY_FEEDS.get(cat_name, [])
     items, _ = collect_items(feed_labels, query=query, max_per_feed=25, force_fetch=False, ai_on=False)
 
@@ -71,7 +84,10 @@ def render_section(cat_name: str, hours_limit: int | None, query: str | None, ma
         if hero.get("img"):
             st.image(hero["img"], use_container_width=True)
         st.markdown(f"#### <a href='{article_url(hero['link'])}'>{hero['title']}</a>", unsafe_allow_html=True)
-        st.markdown(f"<div class='kbm-meta'>{host(hero['link'])} • {pretty_dt(hero.get('dt'))}</div>", unsafe_allow_html=True)
+        st.markdown(
+            f"<div class='kbm-meta'>{host(hero['link'])} • {pretty_dt(hero.get('dt'))}</div>",
+            unsafe_allow_html=True,
+        )
         st.link_button("🔎 Open in KbM", url=article_url(hero["link"]), use_container_width=True)
         with st.expander("Lees preview", expanded=False):
             render_item_preview(hero)
@@ -82,9 +98,14 @@ def render_section(cat_name: str, hours_limit: int | None, query: str | None, ma
             dt_small = t["dt"].astimezone().strftime("%H:%M") if t.get("dt") else ""
             meta2 = f"{dt_small}{' • ' if dt_small else ''}{host(t['link'])}"
             img = t.get("img") or ""
-            img_tag = f"<img class='kbm-thumbimg' src='{img}' alt='' />" if img else "<div class='kbm-thumbimg' aria-hidden='true'></div>"
+            img_tag = (
+                f"<img class='kbm-thumbimg' src='{img}' alt='' />"
+                if img
+                else "<div class='kbm-thumbimg' aria-hidden='true'></div>"
+            )
+
             st.markdown(
-                f\"\"\"
+                f"""
                 <div class="kbm-thumbrow">
                   {img_tag}
                   <div class="kbm-thumbtext">
@@ -92,9 +113,10 @@ def render_section(cat_name: str, hours_limit: int | None, query: str | None, ma
                     <div class="kbm-thumbmeta">{meta2}</div>
                   </div>
                 </div>
-                \"\"\",
+                """,
                 unsafe_allow_html=True,
             )
+
             with st.expander("Lees preview", expanded=False):
                 render_item_preview(t)
         st.markdown("</div>", unsafe_allow_html=True)
