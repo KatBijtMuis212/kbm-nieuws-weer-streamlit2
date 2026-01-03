@@ -119,6 +119,15 @@ def render_section(cat_name: str, only_recent_hours: int | None):
 
         if hero.get("summary"):
             st.write(hero["summary"])
+            with st.expander("Lees meer (KbM samenvatting)", expanded=False):
+    if hero.get("summary"):
+        st.markdown("**Samenvatting (KbM):**")
+        st.write(hero["summary"])
+    if hero.get("excerpt"):
+        st.markdown("**Korte preview:**")
+        st.write(hero["excerpt"])
+    st.markdown(f"[Open origineel artikel]({hero['link']})")
+
 
     # THUMBS (HTML rows => mobile-friendly, no giant stacked images)
     with colB:
