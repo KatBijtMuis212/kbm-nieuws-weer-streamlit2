@@ -121,9 +121,10 @@ background-size:18px 18px;animation:snow 6s linear infinite;opacity:.55}
 @st.cache_data(ttl=900, show_spinner=False)
 def geocode(q: str):
     url = "https://geocoding-api.open-meteo.com/v1/search"
-    r = requests.get(url, params={"name": q, "count": 5, "language": "nl", "format": "json"}, headers={"User-Agent": UA}, timeout=20)
-    r.raise_for_status()
-    data = r.json()
+r = requests.get(url, params={"name": q, "count": 5, "language": "nl", "format": "json"}, headers={"User-Agent": UA}, timeout=20)
+if r.status_code != 200:
+    return []
+data = r.json() if r.text else {}
     return data.get("results", []) or []
 
 
@@ -139,9 +140,32 @@ def forecast(lat: float, lon: float):
         "daily": "temperature_2m_max,temperature_2m_min,weather_code,precipitation_probability_max",
         "forecast_days": 7,
     }
-    r = requests.get(url, params=params, headers={"User-Agent": UA}, timeout=20)
-    r.raise_for_status()
-    return r.json()
+
+    try:
+        r = requests.get(url, params=params, headers={"User-Agent": UA}, timeout=20)
+
+        # Geen raise_for_status meer → we maken er een nette foutmelding van
+        if r.status_code != 200:
+            return {
+                "_error": f"Open-Meteo gaf HTTP {r.status_code}",
+                "_status_code": r.status_code,
+                "current": {},
+                "hourly": {},
+                "daily": {},
+            }
+
+        data = r.json() if r.text else {}
+        if not isinstance(data, dict):
+            return {"_error": "Open-Meteo antwoord was geen JSON-object", "current": {}, "hourly": {}, "daily": {}}
+
+        return data
+
+    except requests.exceptions.Timeout:
+        return {"_error": "Open-Meteo timeout (te traag).", "current": {}, "hourly": {}, "daily": {}}
+    except requests.exceptions.RequestException as e:
+        return {"_error": f"Open-Meteo request fout: {e}", "current": {}, "hourly": {}, "daily": {}}
+    except Exception as e:
+        return {"_error": f"Onbekende fout in forecast(): {e}", "current": {}, "hourly": {}, "daily": {}}
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
@@ -249,6 +273,8 @@ place_name = f"{place.get('name','')} ({place.get('admin1','')})"
 
 data = forecast(lat, lon)
 current = data.get("current", {}) or {}
+if isinstance(data, dict) and data.get("_error"):
+    st.warning(f"⚠️ Weerdata tijdelijk niet beschikbaar: {data.get('_error')}")
 code = int(current.get("weather_code", 0) or 0)
 temp = current.get("temperature_2m", None)
 wind = current.get("wind_speed_10m", None)
