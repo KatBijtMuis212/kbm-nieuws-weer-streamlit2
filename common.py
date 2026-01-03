@@ -16,7 +16,6 @@ except Exception:
 # ----------------------------
 # FEEDS / CATEGORIES
 # ----------------------------
-# Keep your existing CATEGORY_FEEDS / FEEDS if you already customized them.
 CATEGORY_FEEDS = {
     "Net binnen": ["nos_binnenland", "nos_buitenland", "nu_algemeen", "ad_home", "rtv_mh"],
     "Binnenland": ["nos_binnenland", "nu_algemeen", "ad_home", "rtv_mh"],
@@ -194,12 +193,19 @@ def collect_items(
     feed_labels: list[str],
     query: str | None = None,
     max_per_feed: int = 25,
+    force_fetch: bool = False,
+    ai_on: bool = False,
 ):
+    """Backwards-compatible signature (kbm_ui.py expects force_fetch/ai_on)."""
+    # force_fetch/ai_on are currently not used here, but kept for compatibility.
     items: list[dict] = []
     for label in feed_labels:
         feed_url = FEEDS.get(label)
         if not feed_url:
             continue
+        if force_fetch:
+            # crude: bypass cache
+            _FEED_CACHE.pop(feed_url, None)
         d = fetch_feed(feed_url)
         for entry in (d.entries or [])[:max_per_feed]:
             link = _strip_tracking_params(entry.get("link", "") or "")
@@ -232,7 +238,7 @@ def collect_items(
         ]
 
     items.sort(key=lambda x: x.get("dt") or datetime(1970, 1, 1, tzinfo=timezone.utc), reverse=True)
-    return items
+    return items, {"count": len(items)}
 
 
 # ----------------------------
@@ -327,28 +333,21 @@ def _openai_client():
         return None
 
 
-def ai_backgrounder(
-    main_title: str,
-    main_source: str,
-    snippets: list[dict],
-) -> str | None:
-    """Write a deeper, multi-source explainer when full text isn't fetchable."""
+def ai_backgrounder(main_title: str, main_source: str, snippets: list[dict]) -> str | None:
     client = _openai_client()
     if not client:
         return None
 
     try:
         import streamlit as st
-        model = (st.secrets.get("OPENAI_MODEL") or "").strip() or "gpt-5.2"
+        model = (st.secrets.get("OPENAI_MODEL") or "").strip() or "gpt-4o-mini"
     except Exception:
-        model = "gpt-5.2"
+        model = "gpt-4o-mini"
 
-    # Build evidence pack
     lines = []
     for i, s in enumerate(snippets, 1):
         lines.append(f"[{i}] {s.get('source','')} • {s.get('title','')} • {s.get('dt','')}")
         body = (s.get("text") or s.get("rss_summary") or "").strip()
-        # keep input bounded but still rich
         if len(body) > 6000:
             body = body[:6000] + "…"
         lines.append(body)
@@ -358,15 +357,15 @@ def ai_backgrounder(
 
     prompt = f"""Schrijf een Nederlandstalig achtergrondstuk op basis van meerdere bronnen (hieronder).
 Belangrijk:
-- Gebruik alleen informatie die in de bron-snippets staat. Geen wilde aannames.
-- Schrijf in een rustige nieuws-stijl: helder, feitelijk, maar met context.
+- Gebruik alleen informatie die in de bron-snippets staat. Geen aannames.
+- Stijl: rustige nieuws-stijl, helder en feitelijk, met context.
 - Structuur:
-  1) Lead (2–3 zinnen: wat is er aan de hand?)
-  2) Wat weten we zeker (met concrete details)
-  3) Context & achtergrond (waarom dit speelt)
-  4) Wat er nu gebeurt / wat er nog volgt
+  1) Lead (2–3 zinnen)
+  2) Wat weten we zeker (details)
+  3) Context & achtergrond
+  4) Wat gebeurt er nu / wat volgt
   5) Kernpunten (7–12 bullets)
-- Lengte: zo lang als nodig (mag uitgebreid).
+- Lengte: zo lang als nodig.
 
 Hoofd-titel: {main_title}
 Hoofd-bron: {main_source}
@@ -395,7 +394,6 @@ def _format_dt(dt: datetime | None) -> str:
 
 
 def build_related_snippets(main_url: str, main_title: str, window_hours: int = 24, k: int = 6) -> list[dict]:
-    """Collect related items from all feeds using keyword overlap."""
     main_tokens = _tokenize(main_title)
     if not main_tokens:
         return []
@@ -405,7 +403,8 @@ def build_related_snippets(main_url: str, main_title: str, window_hours: int = 2
 
     items = []
     for label in all_labels:
-        for it in collect_items([label], query=None, max_per_feed=25):
+        (its, _) = collect_items([label], query=None, max_per_feed=25, force_fetch=False, ai_on=False)
+        for it in its:
             if not it.get("title") or not it.get("link"):
                 continue
             if it["link"] == main_url:
@@ -415,26 +414,27 @@ def build_related_snippets(main_url: str, main_title: str, window_hours: int = 2
                 continue
             tks = _tokenize(it["title"])
             inter = len(main_tokens.intersection(tks))
-            if inter >= 2:  # small but meaningful
+            if inter >= 2:
                 it["_score"] = inter
                 items.append(it)
 
-    items.sort(key=lambda x: (x.get("_score", 0), x.get("dt") or datetime(1970,1,1,tzinfo=timezone.utc)), reverse=True)
+    items.sort(
+        key=lambda x: (x.get("_score", 0), x.get("dt") or datetime(1970, 1, 1, tzinfo=timezone.utc)),
+        reverse=True,
+    )
+
     picked = []
-    seen_hosts = set()
     for it in items:
-        h = it.get("source") or host(it.get("link",""))
-        # keep diversity: max 2 per host
+        h = it.get("source") or host(it.get("link", ""))
         if sum(1 for p in picked if (p.get("source") or "") == h) >= 2:
             continue
         picked.append(it)
         if len(picked) >= k:
             break
 
-    # Try to fetch some text for picked (best-effort, static only)
     out = []
     for it in picked:
-        src = it.get("link","")
+        src = it.get("link", "")
         txt = ""
         try:
             for cu in _candidate_urls_for_article(src):
@@ -450,10 +450,10 @@ def build_related_snippets(main_url: str, main_title: str, window_hours: int = 2
         out.append(
             {
                 "source": it.get("source") or host(src),
-                "title": it.get("title",""),
+                "title": it.get("title", ""),
                 "dt": _format_dt(it.get("dt")),
                 "text": txt,
-                "rss_summary": it.get("rss_summary",""),
+                "rss_summary": it.get("rss_summary", ""),
                 "link": src,
             }
         )
@@ -473,13 +473,7 @@ def load_article(url: str) -> dict:
                 continue
             title, text = _extract_article_text_from_html(html)
             if text and len(text) > 500:
-                return {
-                    "url": url,
-                    "fetched_url": cu,
-                    "title": title or "",
-                    "text": text,
-                    "ok": True,
-                }
+                return {"url": url, "fetched_url": cu, "title": title or "", "text": text, "ok": True}
             last_err = "no_text"
         except Exception as e:
             last_err = str(e)
