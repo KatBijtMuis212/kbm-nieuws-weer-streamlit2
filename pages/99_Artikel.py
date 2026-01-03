@@ -1,8 +1,8 @@
 import streamlit as st
-from urllib.parse import urlencode
 
 from common import (
     fetch_readable_text,
+    fetch_article_media,
     collect_items,
     CATEGORY_FEEDS,
     find_related_items,
@@ -11,10 +11,12 @@ from common import (
 )
 
 st.set_page_config(page_title="Artikel", page_icon="📰", layout="wide")
-
 st.markdown("# Artikel")
 
-url = st.query_params.get("url") if hasattr(st, "query_params") else st.experimental_get_query_params().get("url", [""])[0]
+try:
+    url = st.query_params.get("url", "")
+except Exception:
+    url = st.experimental_get_query_params().get("url", [""])[0]
 if isinstance(url, list):
     url = url[0]
 url = (url or "").strip()
@@ -25,6 +27,18 @@ if not url:
 
 st.caption(f"Bron: {host(url)}")
 st.markdown(url)
+
+media = fetch_article_media(url)
+
+# Media
+if media.get("video"):
+    st.markdown("### 🎥 Video")
+    st.video(media["video"])
+elif media.get("audio"):
+    st.markdown("### 🎧 Audio")
+    st.audio(media["audio"])
+elif media.get("image"):
+    st.image(media["image"], use_container_width=True)
 
 title, text = fetch_readable_text(url)
 
@@ -37,9 +51,7 @@ if text:
 else:
     st.warning("Dit artikel kon niet volledig uitgelezen worden (mogelijk JS/consent).")
 
-# Multi-source backgrounder (optional)
 with st.expander("🧠 AI-achtergrondstuk (meerdere bronnen)", expanded=False):
-    # gather items from all categories as a pool
     pool_labels = []
     for labels in CATEGORY_FEEDS.values():
         pool_labels.extend(labels)
@@ -59,7 +71,6 @@ with st.expander("🧠 AI-achtergrondstuk (meerdere bronnen)", expanded=False):
         if not api_key:
             st.error("OPENAI_API_KEY ontbreekt in Streamlit Secrets.")
         else:
-            # prompt: strong backgrounder, long allowed
             src_block = "\n".join([f"- {it.get('title','')} ({it.get('link','')})" for it in related[:5]])
             base_text = (text[:12000] if text else "")
             prompt = f"""Je bent een Nederlandse nieuwsredacteur.
@@ -67,8 +78,8 @@ Schrijf een uitgebreid, helder achtergrondstuk (mag lang zijn) voor een slimme l
 - Begin met 2-3 zinnen lead (wat is er gebeurd / waarom relevant).
 - Daarna context, feiten, betrokken partijen, mogelijke gevolgen.
 - Gebruik kopjes.
-- Geen bullet-spam: vooral lopende tekst.
-- Als de originele artikeltekst ontbreekt, baseer je op de bronlijst hieronder en algemene kennis, maar verzin geen feiten: wees duidelijk als iets onzeker is.
+- Vooral lopende tekst.
+- Verzin geen feiten: wees duidelijk als iets onzeker is.
 
 ORIGINELE TEKST (indien beschikbaar):
 {base_text}
