@@ -218,25 +218,45 @@ with colL:
         st.components.v1.iframe(rv_url, height=560, scrolling=True)
         st.markdown("</div>", unsafe_allow_html=True)
     with t2:
-        st.markdown("<div class='kbm-card'>", unsafe_allow_html=True)
-        maps = {
-            "Actueel weerbeeld": "https://cdn.knmi.nl/knmi/map/page/weer/waarschuwingen_verwachtingen/weerkaarten/actueel-weerbeeld.png",
-            "Verwachting +1": "https://cdn.knmi.nl/knmi/map/page/weer/waarschuwingen_verwachtingen/weerkaarten/verwachting-1.png",
-            "Verwachting +2": "https://cdn.knmi.nl/knmi/map/page/weer/waarschuwingen_verwachtingen/weerkaarten/verwachting-2.png",
-        }
-        pick = st.selectbox("Kaart", list(maps.keys()))
-        st.image(maps[pick], use_container_width=True)
-        st.markdown("</div>", unsafe_allow_html=True)
-    with t3:
-        st.markdown("<div class='kbm-card'>", unsafe_allow_html=True)
-        st.markdown("#### Tekstueel weerbericht (KNMI • best effort)")
-    txt = knmi_text()
-        if txt:
-        st.markdown(txt)
-    else:
-        st.info("KNMI-tekst kon niet netjes worden opgehaald (site-layout veranderd).")
+    st.markdown("<div class='kbm-card'>", unsafe_allow_html=True)
+    st.markdown("#### Weerkaart Nederland & Europa")
 
-        st.markdown("</div>", unsafe_allow_html=True)
+    kaart = st.selectbox(
+        "Kies kaart",
+        [
+            "Neerslag (RainViewer)",
+            "Temperatuur (Windy)",
+            "Wind (Windy)",
+            "Bewolking (Windy)"
+        ]
+    )
+
+    if kaart == "Neerslag (RainViewer)":
+        st.components.v1.iframe(
+            "https://www.rainviewer.com/map.html?loc=52.15,5.39,7&oFa=0&oC=0&oU=0&oCS=1&oF=0&oAP=0&c=3&o=83&lm=1&layer=radar&sm=1",
+            height=560,
+            scrolling=True
+        )
+
+    elif kaart == "Temperatuur (Windy)":
+        st.components.v1.iframe(
+            "https://embed.windy.com/embed2.html?lat=52.15&lon=5.39&detailLat=52.15&detailLon=5.39&width=650&height=560&zoom=6&level=surface&overlay=temp&product=ecmwf",
+            height=560
+        )
+
+    elif kaart == "Wind (Windy)":
+        st.components.v1.iframe(
+            "https://embed.windy.com/embed2.html?lat=52.15&lon=5.39&detailLat=52.15&detailLon=5.39&width=650&height=560&zoom=6&level=surface&overlay=wind&product=ecmwf",
+            height=560
+        )
+
+    elif kaart == "Bewolking (Windy)":
+        st.components.v1.iframe(
+            "https://embed.windy.com/embed2.html?lat=52.15&lon=5.39&detailLat=52.15&detailLon=5.39&width=650&height=560&zoom=6&level=surface&overlay=clouds&product=ecmwf",
+            height=560
+        )
+
+    st.markdown("</div>", unsafe_allow_html=True)
 
 with colR:
     st.markdown("<div class='kbm-card'>", unsafe_allow_html=True)
