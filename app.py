@@ -80,17 +80,17 @@ def render_section(cat_name: str, only_recent_hours: int | None):
                 dt_txt = t["dt"].astimezone().strftime("%H:%M") if t.get("dt") else ""
                 st.markdown(f"<div class='kbm-meta'>{dt_txt}{' • ' if dt_txt else ''}{host(t['link'])}</div>", unsafe_allow_html=True)
 
-    page_map = {{
-        "Net binnen": "pages/00_Net_binnen.py",
-        "Binnenland": "pages/01_Binnenland.py",
-        "Buitenland": "pages/02_Buitenland.py",
-        "Show": "pages/03_Show.py",
-        "Lokaal": "pages/04_Lokaal.py",
-        "Sport": "pages/06_Sport.py",
-        "Tech": "pages/07_Tech.py",
-        "Opmerkelijk": "pages/08_Opmerkelijk.py",
-        "Weer": "pages/05_Weer.py",
-    }}
+page_map = {
+    "Net binnen": "pages/00_Net_binnen.py",
+    "Binnenland": "pages/01_Binnenland.py",
+    "Buitenland": "pages/02_Buitenland.py",
+    "Show": "pages/03_Show.py",
+    "Lokaal": "pages/04_Lokaal.py",
+    "Sport": "pages/06_Sport.py",
+    "Tech": "pages/07_Tech.py",
+    "Opmerkelijk": "pages/08_Opmerkelijk.py",
+    "Weer": "pages/05_Weer.py",
+}
     target = page_map.get(cat_name)
     if target:
         st.page_link(target, label=f"Meer {cat_name}", icon="➡️")
