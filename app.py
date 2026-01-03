@@ -20,7 +20,6 @@ PAGE_MAP = {
     "Artikel": "pages/99_Artikel.py",
 }
 
-
 def require_login():
     pw = st.secrets.get("APP_PASSWORD", "").strip()
     if not pw:
@@ -36,7 +35,6 @@ def require_login():
     if not st.session_state.kbm_ok:
         st.stop()
 
-
 def logo_b64() -> str:
     try:
         with open("assets/Kbmnieuwslogo-zwartomrand.png", "rb") as f:
@@ -44,6 +42,9 @@ def logo_b64() -> str:
     except Exception:
         return ""
 
+def article_url(src_url: str) -> str:
+    # Internal page route (multipage): /Artikel
+    return f"/Artikel?url={src_url}"
 
 require_login()
 
@@ -70,13 +71,12 @@ with st.sidebar:
     st.markdown("## ⭐ Lees later")
     if st.session_state.bookmarks:
         for bm in st.session_state.bookmarks[:25]:
-            st.markdown(f"- [{bm['title']}]({bm['link']})")
+            st.markdown(f"- [{bm['title']}]({article_url(bm['link'])})")
         if st.button("🧹 Wis bookmarks", use_container_width=True):
             st.session_state.bookmarks = []
             st.rerun()
     else:
         st.caption("Nog leeg. Klik bij een bericht op ⭐.")
-
 
 inject_css(st, dark=dark_mode)
 
@@ -87,7 +87,6 @@ if auto_refresh:
     except Exception:
         st.warning("Auto refresh vereist dependency: streamlit-autorefresh. Voeg toe aan requirements.txt.")
 
-
 st.markdown(
     f"""
 <div class="kbm-topbar">
@@ -95,7 +94,7 @@ st.markdown(
     <img src="data:image/png;base64,{logo_b64()}" />
     <div>
       <div class="kbm-title">KbM Nieuws</div>
-      <div class="kbm-sub">Snel & luxe • AI alleen op artikelpagina (veel sneller) • lees later ⭐</div>
+      <div class="kbm-sub">Alles lezen in de app • AI-samenvatting op artikelpagina • lees later ⭐</div>
     </div>
   </div>
 </div>
@@ -111,8 +110,7 @@ with rightc:
         clear_feed_caches()
         st.rerun()
 
-st.caption("Tip: AI-samenvattingen draaien automatisch op de **Artikel**-pagina. Home blijft dus supersnel ⚡")
-
+st.caption("Klik altijd op **🔎 Open** (of op de titel) om het artikel + samenvatting **in Streamlit** te lezen.")
 
 def add_bookmark(it: dict):
     ids = {b.get("id") for b in st.session_state.bookmarks}
@@ -124,7 +122,6 @@ def add_bookmark(it: dict):
         "link": it.get("link"),
         "dt": it.get("dt"),
     })
-
 
 def render_item_expander(it: dict, compact: bool = False):
     title = it.get("title") or "Bericht"
@@ -141,7 +138,7 @@ def render_item_expander(it: dict, compact: bool = False):
                 add_bookmark(it)
                 st.toast("Toegevoegd aan lees later ⭐")
         with b2:
-            st.link_button("🔎 Open", url=f"/Artikel?url={it.get('link','')}", use_container_width=True)
+            st.link_button("🔎 Open", url=article_url(it.get("link","")), use_container_width=True)
 
     if it.get("img") and not compact:
         st.image(it["img"], use_container_width=True)
@@ -150,8 +147,8 @@ def render_item_expander(it: dict, compact: bool = False):
         st.markdown("**Korte preview (RSS):**")
         st.write(it["rss_summary"])
 
-    st.markdown(f"[Open origineel artikel]({it.get('link','')})")
-
+    # External source link stays available, but secondary
+    st.markdown(f"<div class='kbm-meta'><a href='{it.get('link','')}' target='_blank' rel='noopener'>Open origineel artikel</a></div>", unsafe_allow_html=True)
 
 def render_section(cat_name: str, hours_limit: int | None):
     feed_labels = CATEGORY_FEEDS.get(cat_name, [])
@@ -186,8 +183,16 @@ def render_section(cat_name: str, hours_limit: int | None):
     with colA:
         if hero.get("img"):
             st.image(hero["img"], use_container_width=True)
-        st.markdown(f"#### {hero['title']}")
+        # Title links to internal Artikel page
+        st.markdown(f"#### <a href='{article_url(hero['link'])}'>{hero['title']}</a>", unsafe_allow_html=True)
         st.markdown(f"<div class='kbm-meta'>{host(hero['link'])} • {pretty_dt(hero.get('dt'))}</div>", unsafe_allow_html=True)
+        btns = st.columns([0.5, 0.5], gap="small")
+        with btns[0]:
+            st.link_button("🔎 Open in KbM", url=article_url(hero["link"]), use_container_width=True)
+        with btns[1]:
+            if st.button("⭐ Lees later", key=f"bm_hero_{hero['id']}", use_container_width=True):
+                add_bookmark(hero)
+                st.toast("Toegevoegd aan lees later ⭐")
         with st.expander("Lees preview", expanded=False):
             render_item_expander(hero, compact=True)
 
@@ -199,12 +204,13 @@ def render_section(cat_name: str, hours_limit: int | None):
             img = t.get("img") or ""
             img_tag = f"<img class='kbm-thumbimg' src='{img}' alt='' />" if img else "<div class='kbm-thumbimg' aria-hidden='true'></div>"
             new_badge = "<span class='kbm-new'>NEW</span>" if t.get("is_new") else ""
+            # IMPORTANT: link goes to internal Artikel page
             st.markdown(
                 f"""
                 <div class="kbm-thumbrow">
                   {img_tag}
                   <div class="kbm-thumbtext">
-                    <p class="kbm-thumbtitle">{new_badge}<a href="{t['link']}" target="_blank" rel="noopener">{t['title']}</a></p>
+                    <p class="kbm-thumbtitle">{new_badge}<a href="{article_url(t['link'])}">{t['title']}</a></p>
                     <div class="kbm-thumbmeta">{meta2}</div>
                   </div>
                 </div>
@@ -224,7 +230,6 @@ def render_section(cat_name: str, hours_limit: int | None):
     for it in items[:30]:
         st.session_state.seen_ids.add(it["id"])
 
-
 hrs = st.session_state.only_recent_hours
 
 st.markdown("## Net binnen")
@@ -242,4 +247,4 @@ with g2:
     render_section("Tech", hours_limit=hrs)
 render_section("Opmerkelijk", hours_limit=hrs)
 
-st.caption("Home is RSS-snel. Voor de volledige (AI) samenvatting: open een bericht via 🔎 Open.")
+st.caption("Voor de volledige (AI) samenvatting: open een bericht via 🔎 Open of klik op de titel.")
