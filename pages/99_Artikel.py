@@ -1,5 +1,4 @@
 import streamlit as st
-
 from common import load_article, host
 
 st.set_page_config(page_title="Artikel", page_icon="🔎", layout="wide")
@@ -22,7 +21,7 @@ with st.spinner("Artikel ophalen & samenvatten…"):
     it = load_article(url, force_fetch=True)
 
 st.markdown(f"### {it.get('title') or 'Bericht'}")
-st.caption(host(url))
+st.caption(host(url) + (f" • samenvatting: {it.get('summary_mode','')}" if it.get("summary_mode") else ""))
 
 if it.get("img"):
     st.image(it["img"], use_container_width=True)
