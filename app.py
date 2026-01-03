@@ -139,6 +139,7 @@ def render_section(cat_name: str, only_recent_hours: int | None):
     if target:
         st.page_link(target, label=f"Meer {cat_name}", icon="➡️")
 
+
     st.markdown("</div>", unsafe_allow_html=True)
 
 
