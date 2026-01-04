@@ -209,4 +209,4 @@ def render_section(title: str, hours_limit: int = 24, query: str | None = None, 
     # Meer berichten (rest)
     with st.expander("Meer berichten", expanded=False):
         for idx, it in enumerate(items[1+len(thumbs):], start=100):
-            st.markdown(f"- [{_norm_title(it.get('title',''))}]({_safe_str(it.get('link'))})  \n<span class='kbm-meta'>{host(it.get('link',''))} • {pretty_dt(it.get('dt'))}</span>", unsafe_allow_html=True)
+            st.markdown(f"- [{_norm_title(it.get('title',''))}]({_safe_str(it.get('link'))})  \n<span class='kbm-meta'>{host(it.get('link',''))} • {pretty_dt(it.get('dt'))}</span>", unsafe_allow_html=True) 
