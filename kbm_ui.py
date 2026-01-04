@@ -1,309 +1,291 @@
-# kbm_ui.py — KbM Nieuws UI (hero + thumbs, light theme, safe keys)
+# kbm_ui.py — UI renderer for KbM Nieuws (stable keys, hero+thumb layout, light theme)
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Tuple
+import html
 import re
+from typing import Any, Dict, List, Optional
+
 import streamlit as st
 
-from common import (
-    CATEGORY_FEEDS,
-    collect_items,
-    within_hours,
-    host,
-    item_id,
-    fetch_art,
-    pre,
-)
+# Import common as a module to avoid ImportError when one symbol is missing
+import common as cm
 
-# -----------------------------
-# Helpers
-# -----------------------------
 
-def _slug(s: str) -> str:
-    s = (s or "").strip().lower()
-    s = re.sub(r"[^a-z0-9]+", "_", s)
-    return s.strip("_") or "sec"
+# ---------- small helpers ----------
+def _get(name: str, default: Any = None) -> Any:
+    return getattr(cm, name, default)
 
-def _pick_image(it: Dict[str, Any]) -> str:
-    return (it.get("image") or it.get("img") or it.get("thumb") or it.get("enclosure") or "").strip()
 
-def _pick_title(it: Dict[str, Any]) -> str:
-    return (it.get("title") or "").strip()
+def _host(url: str) -> str:
+    fn = _get("host")
+    try:
+        return fn(url) if callable(fn) else ""
+    except Exception:
+        return ""
 
-def _pick_link(it: Dict[str, Any]) -> str:
-    return (it.get("link") or "").strip()
 
-def _pick_dt_label(it: Dict[str, Any]) -> str:
-    # keep it simple: show already formatted dt_label if available
-    return (it.get("dt_label") or it.get("pub") or it.get("date") or "").strip()
+def _item_id(it: dict, fallback: str) -> str:
+    fn = _get("item_id")
+    try:
+        v = fn(it) if callable(fn) else None
+    except Exception:
+        v = None
+    v = (v or "").strip()
+    return v or fallback
 
-def _safe_text(s: str) -> str:
-    return (s or "").replace("\x00", "").strip()
 
-def _matches_query(it: Dict[str, Any], query: str) -> bool:
-    q = (query or "").strip().lower()
-    if not q:
+def _pretty_dt(dt: Any) -> str:
+    fn = _get("pretty_dt")
+    try:
+        return fn(dt) if callable(fn) else ""
+    except Exception:
+        return ""
+
+
+def _within_hours(dt: Any, hours: int) -> bool:
+    fn = _get("within_hours")
+    try:
+        return fn(dt, hours) if callable(fn) else True
+    except Exception:
         return True
-    hay = " ".join([
-        _pick_title(it),
-        _pick_link(it),
-        str(it.get("source") or ""),
-        str(it.get("host") or ""),
-    ]).lower()
-    return q in hay
 
-def _dedup(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    seen: set[str] = set()
-    out: List[Dict[str, Any]] = []
+
+def _pick_image(it: dict) -> str:
+    return (it.get("image") or it.get("img") or it.get("thumb") or it.get("thumbnail") or "").strip()
+
+
+def _pick_summary(it: dict) -> str:
+    return (it.get("summary") or it.get("rss_summary") or it.get("description") or "").strip()
+
+
+def _section_key(name: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", (name or "").strip().lower()).strip("_") or "sec"
+
+
+# ---------- filtering Binnenland/Buitenland sanity ----------
+_FOREIGN_HINTS = [
+    "grieken", "turk", "curacao", "curaçao", "brussel", "brussels",
+    "duits", "frankrijk", "spanje", "ital", "verenigde staten", "washington",
+    "iran", "israel", "israël", "gaza", "ukraine", "oekra", "rusland",
+    "china", "japan", "india", "syrie", "syrië", "afghan", "mexic",
+    "venez", "argentin", "brazil", "nigeria", "kenia", "australi"
+]
+def _looks_foreign(it: dict) -> bool:
+    url = (it.get("link") or it.get("url") or "").lower()
+    title = (it.get("title") or "").lower()
+    txt = f"{title} {url}"
+    if "/buitenland" in url or "/world" in url or "/international" in url:
+        return True
+    return any(h in txt for h in _FOREIGN_HINTS)
+
+def _section_filter(section_name: str, items: List[dict]) -> List[dict]:
+    s = (section_name or "").lower()
+    if "binnenland" in s:
+        # remove obvious buitenland
+        return [it for it in items if not _looks_foreign(it)]
+    if "buitenland" in s:
+        # keep only likely foreign when mixed feeds leak
+        return [it for it in items if _looks_foreign(it) or "/buitenland" in (it.get("link") or "").lower()]
+    return items
+
+
+# ---------- article thumbnail/og:image best-effort ----------
+@st.cache_data(show_spinner=False, ttl=6 * 60 * 60)
+def _og_image(url: str) -> str:
+    """Fetch og:image from article page (best-effort). Requires requests+bs4 in common."""
+    fn = _get("fetch_article_media")
+    try:
+        if callable(fn):
+            media = fn(url)  # expected dict with 'image' maybe
+            if isinstance(media, dict):
+                img = (media.get("image") or media.get("og_image") or "").strip()
+                if img:
+                    return img
+    except Exception:
+        pass
+    return ""
+
+
+def _ensure_images(items: List[dict]) -> List[dict]:
+    out = []
     for it in items:
-        iid = _safe_text(item_id(it)) or _safe_text(_pick_link(it)) or _safe_text(_pick_title(it))
-        if not iid:
-            # last resort: hash title+link
-            iid = str(hash((_pick_title(it), _pick_link(it))))
-        if iid in seen:
-            continue
-        seen.add(iid)
+        if not _pick_image(it):
+            url = it.get("link") or it.get("url") or ""
+            if url:
+                img = _og_image(url)
+                if img:
+                    it = dict(it)
+                    it["image"] = img
         out.append(it)
     return out
 
-# Binnenland / Buitenland heuristics (light touch, avoids obvious misplacements)
-_FOREIGN_MARKERS = [
-    "/buitenland", "/international", "/world", "/wereld", "/foreign",
-    "brussel", "brussels", "eu-", "europa", "griekenland", "greece",
-    "curaçao", "curacao", "verenigde staten", "vs", "ukraine", "rusland", "china",
-]
-_DOMESTIC_MARKERS = [
-    "/binnenland", "/net-binnen", "/politiek", "/economie", "/sport", "/tech",
-    "den haag", "amsterdam", "rotterdam", "utrecht", "groningen", "friesland",
-    "noord-holland", "zuid-holland", "gelderland", "brabant", "limburg", "zeeland",
-]
 
-def _filter_binnen_buiten(category: str, items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    cat = (category or "").strip().lower()
-    if cat not in ("binnenland", "buitenland"):
-        return items
-
-    def score(it: Dict[str, Any]) -> Tuple[int, int]:
-        # returns (domestic_score, foreign_score)
-        t = (_pick_title(it) + " " + _pick_link(it)).lower()
-        d = sum(1 for m in _DOMESTIC_MARKERS if m in t)
-        f = sum(1 for m in _FOREIGN_MARKERS if m in t)
-        return d, f
-
-    filtered: List[Dict[str, Any]] = []
-    for it in items:
-        d, f = score(it)
-        if cat == "binnenland":
-            # drop obvious foreign
-            if f >= 1 and d == 0:
-                continue
-            filtered.append(it)
-        else:
-            # buitenland: prefer foreign, but allow if feed clearly is foreign category
-            if d >= 1 and f == 0:
-                continue
-            filtered.append(it)
-
-    return filtered
-
-# -----------------------------
-# CSS
-# -----------------------------
-
-def _ensure_css() -> None:
-    if st.session_state.get("_kbm_ui_css_done"):
-        return
+# ---------- rendering ----------
+def _inject_montserrat():
     st.markdown(
         """
 <style>
-/* Light baseline */
-.kbm-block { margin: 8px 0 18px 0; }
-.kbm-hero { position: relative; border-radius: 16px; overflow: hidden; border: 1px solid rgba(0,0,0,.08); }
-.kbm-hero img { width: 100%; height: 220px; object-fit: cover; display:block; }
-.kbm-hero .kbm-hero-overlay {
+@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700&display=swap');
+html, body, [class*="css"]  { font-family: 'Montserrat', sans-serif !important; }
+.kbm-hero { position: relative; border-radius: 18px; overflow: hidden; margin: 10px 0 14px 0; }
+.kbm-hero img { width: 100%; height: 240px; object-fit: cover; display:block; }
+.kbm-hero .overlay {
   position:absolute; left:0; right:0; bottom:0;
-  padding: 14px 14px 12px 14px;
-  background: linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(0,0,0,.70) 55%, rgba(0,0,0,.80) 100%);
+  padding: 14px 16px;
+  background: linear-gradient(180deg, rgba(0,0,0,0.0), rgba(0,0,0,0.65));
+  color: #fff;
 }
-.kbm-hero .kbm-hero-title { color: #fff; font-weight: 700; font-size: 22px; line-height: 1.2; margin: 0; }
-.kbm-hero .kbm-hero-meta { color: rgba(255,255,255,.92); font-size: 13px; margin-top: 4px; }
+.kbm-hero .overlay .t { font-weight: 700; font-size: 28px; line-height: 1.1; margin: 0; }
+.kbm-hero .overlay .m { opacity: .92; font-size: 14px; margin-top: 6px; }
 
-.kbm-row { display:flex; gap: 12px; align-items: center; padding: 10px 10px; border-radius: 14px; border: 1px solid rgba(0,0,0,.08); background: #fff; margin-top: 10px; }
-.kbm-thumb { width: 68px; height: 68px; border-radius: 12px; background: #e9edf2; overflow:hidden; flex: 0 0 auto; border: 1px solid rgba(0,0,0,.06); }
-.kbm-thumb img { width: 100%; height: 100%; object-fit: cover; display:block; }
-.kbm-row .kbm-txt { flex: 1 1 auto; min-width: 0; }
-.kbm-row .kbm-title { font-weight: 700; font-size: 16px; line-height: 1.25; color: #0b1220; margin: 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.kbm-row .kbm-meta { margin-top: 4px; font-size: 12px; color: rgba(11,18,32,.62); }
-
-.kbm-article { margin-top: 12px; padding: 12px 12px; border-radius: 14px; border: 1px solid rgba(0,0,0,.08); background:#fff; }
-.kbm-article h3 { margin: 0 0 6px 0; }
+.kbm-row { display:flex; gap:14px; align-items:center; padding: 10px 0; border-bottom: 1px solid rgba(0,0,0,.08);}
+.kbm-thumb { width: 72px; height: 72px; border-radius: 14px; object-fit: cover; background: #eee; flex: 0 0 72px;}
+.kbm-title { font-weight: 600; font-size: 18px; line-height: 1.2; margin: 0; color: #111; }
+.kbm-meta { font-size: 13px; opacity: .70; margin-top: 2px; color: #111; }
+.kbm-actions { display:flex; gap:8px; margin-top: 8px;}
+.kbm-actions button { width: 100%; }
 </style>
         """,
         unsafe_allow_html=True,
     )
-    st.session_state["_kbm_ui_css_done"] = True
 
-# -----------------------------
-# Article view
-# -----------------------------
 
-def _render_article(section_key: str, it: Dict[str, Any]) -> None:
-    title = _pick_title(it)
-    link = _pick_link(it)
-    src = host(link) if link else (it.get("host") or it.get("source") or "")
-    dt = _pick_dt_label(it)
-
-    st.markdown('<div class="kbm-article">', unsafe_allow_html=True)
-    st.markdown(f"### {title}")
-    if src or dt:
-        st.caption(" • ".join([x for x in [str(src).strip(), str(dt).strip()] if x]))
-    c1, c2 = st.columns([1, 1], gap="small")
-    with c1:
-        if link:
-            st.link_button("Open origineel", link, use_container_width=True)
-    with c2:
-        st.button(
-            "Sluit",
-            key=f"close_{section_key}",
-            use_container_width=True,
-            on_click=lambda: st.session_state.__setitem__(f"open_{section_key}", ""),
-        )
-
-    # Try to fetch full article (best-effort)
-    if link:
-        try:
-            art = fetch_art(link)
-        except Exception as e:
-            art = {"ok": False, "text": "", "html": "", "error": str(e)}
-        if art and art.get("ok"):
-            txt = (art.get("text") or "").strip()
-            if txt:
-                st.write(txt)
-            else:
-                html = (art.get("html") or "").strip()
-                if html:
-                    st.markdown(html, unsafe_allow_html=True)
-                else:
-                    st.caption("Geen artikeltekst gevonden.")
-        else:
-            st.caption("Dit artikel kon niet volledig uitgelezen worden (mogelijk JS/consent).")
-    st.markdown("</div>", unsafe_allow_html=True)
-
-# -----------------------------
-# Main render
-# -----------------------------
-
-def render_section(
-    category: str,
-    *,
-    hours_limit: Optional[int] = None,
-    query: str = "",
-    max_items: int = 80,
-    thumbs_n: int = 4,
-    feed_labels: Optional[List[str]] = None,
-) -> None:
+def render_section(section_name: str, hours_limit: int = 6, query: Optional[str] = None,
+                   max_items: int = 60, thumbs_n: int = 4):
     """
-    Render one category block:
-    - 1 hero (image + title overlay)
-    - thumbs_n list items with thumbnail + title
-    Clicking opens an inline article view (no per-item expander).
+    Render one news section:
+    - HERO (1 item) + THUMB LIST (thumbs_n items)
+    - Remaining items shown as compact list with "Lees preview" toggle
     """
-    _ensure_css()
+    _inject_montserrat()
 
-    labels = feed_labels or CATEGORY_FEEDS.get(category, [])
-    if not labels:
-        st.info(f"Geen feeds ingesteld voor {category}.")
+    section_key = _section_key(section_name)
+
+    # Collect items
+    collect = _get("collect_items")
+    catfeeds = _get("CATEGORY_FEEDS", {})
+    feeds = catfeeds.get(section_name, []) if isinstance(catfeeds, dict) else []
+    if not callable(collect):
+        st.error("collect_items ontbreekt in common.py")
         return
 
-    items, _meta = collect_items(labels, query=None, max_items=max_items)
-    items = _dedup(items)
-    items = _filter_binnen_buiten(category, items)
+    items = collect(feeds, query=query, max_items=max_items)
 
+    # Time filter
     if hours_limit:
-        items = [x for x in items if within_hours(x.get("dt"), hours_limit)]
-    if query:
-        items = [x for x in items if _matches_query(x, query)]
+        items = [x for x in items if _within_hours(x.get("dt"), hours_limit)]
+
+    # Binnenland/Buitenland sanity
+    items = _section_filter(section_name, items)
+
+    # Dedup by item_id
+    seen = set()
+    deduped = []
+    for i, it in enumerate(items):
+        iid = _item_id(it, f"{section_key}_{i}")
+        if iid in seen:
+            continue
+        seen.add(iid)
+        deduped.append(it)
+    items = deduped
+
+    # Fill images for hero/thumbs (best-effort)
+    items = _ensure_images(items)
+
+    st.markdown(f"## {html.escape(section_name)}")
 
     if not items:
-        st.caption("Geen resultaten.")
+        st.caption("Geen berichten gevonden.")
         return
 
-    section_key = _slug(category)
-
-    # Keep an "open item" per section
-    open_key = f"open_{section_key}"
-    if open_key not in st.session_state:
-        st.session_state[open_key] = ""
-
     hero = items[0]
-    hero_img = _pick_image(hero)
-    hero_title = _pick_title(hero)
-    hero_link = _pick_link(hero)
+    rest = items[1:]
 
     # HERO
+    hero_img = _pick_image(hero)
+    hero_title = (hero.get("title") or "Onbekende titel").strip()
+    hero_url = hero.get("link") or hero.get("url") or ""
+    hero_meta = f"{_host(hero_url)} • {_pretty_dt(hero.get('dt'))}".strip(" •")
+
     if hero_img:
-        st.markdown('<div class="kbm-hero">', unsafe_allow_html=True)
-        st.markdown(f'<img src="{hero_img}">', unsafe_allow_html=True)
-        meta = " • ".join([x for x in [host(hero_link), _pick_dt_label(hero)] if x])
         st.markdown(
-            f'<div class="kbm-hero-overlay"><div class="kbm-hero-title">{hero_title}</div>'
-            f'<div class="kbm-hero-meta">{meta}</div></div>',
+            f"""
+<div class="kbm-hero">
+  <img src="{html.escape(hero_img)}" alt="hero">
+  <div class="overlay">
+    <div class="t">{html.escape(hero_title)}</div>
+    <div class="m">{html.escape(hero_meta)}</div>
+  </div>
+</div>
+            """,
             unsafe_allow_html=True,
         )
-        st.markdown("</div>", unsafe_allow_html=True)
     else:
-        # no image: just title
         st.subheader(hero_title)
+        st.caption(hero_meta)
 
-    # Hero buttons
-    b1, b2 = st.columns([1, 1], gap="small")
-    with b1:
-        if hero_link:
-            st.link_button("Open origineel", hero_link, use_container_width=True)
-    with b2:
-        st.button(
-            "Lees in app",
-            key=f"open_{section_key}_hero_{item_id(hero)}_0",
-            use_container_width=True,
-            on_click=lambda iid=item_id(hero): st.session_state.__setitem__(open_key, iid),
-        )
+    # Hero actions
+    c1, c2 = st.columns([1, 1])
+    with c1:
+        if hero_url:
+            st.link_button("Open origineel", hero_url, use_container_width=True)
+    with c2:
+        # route to article page (if you have one), else open original
+        st.link_button("Lees in app", hero_url, use_container_width=True)
 
-    # THUMBS LIST (next N items)
-    for i, it in enumerate(items[1:1 + max(0, thumbs_n)], start=1):
+    # THUMB TOP LIST
+    top = rest[:thumbs_n]
+    for idx, it in enumerate(top):
+        url = it.get("link") or it.get("url") or ""
         img = _pick_image(it)
-        title = _pick_title(it)
-        link = _pick_link(it)
-        meta = " • ".join([x for x in [host(link), _pick_dt_label(it)] if x])
-
-        st.markdown('<div class="kbm-row">', unsafe_allow_html=True)
-        if img:
-            st.markdown(f'<div class="kbm-thumb"><img src="{img}"></div>', unsafe_allow_html=True)
-        else:
-            st.markdown('<div class="kbm-thumb"></div>', unsafe_allow_html=True)
+        title = (it.get("title") or "Onbekende titel").strip()
+        meta = f"{_host(url)} • {_pretty_dt(it.get('dt'))}".strip(" •")
         st.markdown(
-            f'<div class="kbm-txt"><div class="kbm-title">{title}</div><div class="kbm-meta">{meta}</div></div>',
+            f"""
+<div class="kbm-row">
+  <img class="kbm-thumb" src="{html.escape(img) if img else ''}" alt="">
+  <div style="flex:1;">
+    <div class="kbm-title">{html.escape(title)}</div>
+    <div class="kbm-meta">{html.escape(meta)}</div>
+  </div>
+</div>
+            """,
             unsafe_allow_html=True,
         )
-        st.markdown("</div>", unsafe_allow_html=True)
+        bcols = st.columns([1, 1, 1])
+        # Unique keys: include section_key + idx + item_id fallback
+        iid = _item_id(it, f"{section_key}_top_{idx}")
+        with bcols[0]:
+            if url:
+                st.link_button("Open origineel", url, use_container_width=True, key=f"orig_{section_key}_{idx}_{iid}")
+        with bcols[1]:
+            if url:
+                st.link_button("Lees in app", url, use_container_width=True, key=f"open_{section_key}_{idx}_{iid}")
+        with bcols[2]:
+            st.button("⭐ Bewaar", key=f"save_{section_key}_{idx}_{iid}", use_container_width=True)
 
-        c1, c2 = st.columns([1, 1], gap="small")
-        with c1:
-            if link:
-                st.link_button("Open origineel", link, use_container_width=True, key=f"orig_{section_key}_{item_id(it)}_{i}")
-        with c2:
-            st.button(
-                "Lees in app",
-                key=f"open_{section_key}_{item_id(it)}_{i}",
-                use_container_width=True,
-                on_click=lambda iid=item_id(it): st.session_state.__setitem__(open_key, iid),
-            )
-
-    # Article view (if selected)
-    opened = st.session_state.get(open_key) or ""
-    if opened:
-        # find matching item in current slice or in full list
-        it = next((x for x in items if item_id(x) == opened), None)
-        if it:
-            _render_article(section_key, it)
-        else:
-            st.session_state[open_key] = ""
+    # Remaining list (compact)
+    if len(rest) > thumbs_n:
+        st.markdown("### Meer berichten")
+        for j, it in enumerate(rest[thumbs_n:]):
+            url = it.get("link") or it.get("url") or ""
+            title = (it.get("title") or "Onbekende titel").strip()
+            meta = f"{_host(url)} • {_pretty_dt(it.get('dt'))}".strip(" •")
+            iid = _item_id(it, f"{section_key}_more_{j}")
+            st.markdown(f"**{html.escape(title)}**  \n{html.escape(meta)}")
+            show = st.toggle("Lees preview", key=f"pv_{section_key}_{j}_{iid}")
+            if show:
+                summary = _pick_summary(it)
+                if not summary and url:
+                    # fallback: try fetch readable
+                    fr = _get("fetch_readable_text")
+                    try:
+                        if callable(fr):
+                            summary = (fr(url) or "").strip()
+                    except Exception:
+                        summary = ""
+                if summary:
+                    st.write(summary[:1200] + ("…" if len(summary) > 1200 else ""))
+                else:
+                    st.caption("Geen preview beschikbaar.")
+            st.divider()
