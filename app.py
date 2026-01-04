@@ -33,7 +33,7 @@ if not safe_mode:
     with st.spinner("Show laden…"):
         render_section("Show", hours_limit=hrs, query=query, max_items=60, thumbs_n=4)
     with st.spinner("Lokaal laden…"):
-        render_section("Lokaal", hours_limit=24, query=query, max_items=60, thumbs_n=4)
+        render_section("Lokaal", hours_limit=72, query=query, max_items=60, thumbs_n=4)
     with st.spinner("Sport laden…"):
         render_section("Sport", hours_limit=hrs, query=query, max_items=60, thumbs_n=4)
     with st.spinner("Tech laden…"):
