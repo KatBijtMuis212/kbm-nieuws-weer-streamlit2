@@ -19,6 +19,11 @@ def render_departures(town: str, stop: str):
     except Exception as e:
         st.error(f"Vertrektijd.info fout: {e}")
         return
+st.warning("Geen locatie. Tip: probeer Chrome of geef locatie-permissie.")
+fallback_town = st.text_input("Fallback: plaats", placeholder="bijv. Huizen")
+fallback_stop = st.text_input("Fallback: halte", placeholder="bijv. Busstation")
+if st.button("Toon vertrektijden (fallback)", use_container_width=True):
+    render_departures(fallback_town, fallback_stop)
 
     # data structuur verschilt soms; probeer slim te lezen
     obj = data.get("obj") if isinstance(data, dict) else None
