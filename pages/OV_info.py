@@ -3,8 +3,6 @@ import streamlit as st
 from datetime import datetime
 from streamlit_js_eval import streamlit_js_eval
 
-import time
-import collections
 from ov_api import search_stops_smart, nearby_stops, departures_by_stopcode
 
 st.set_page_config(page_title="OV Info", page_icon="🚌", layout="wide")
@@ -53,132 +51,102 @@ def _departures_table(dep_json: dict):
         return
     st.dataframe(rows, use_container_width=True, hide_index=True)
 
-def _stop_label(stop) -> str:
-    """Maak een leesbare label-string voor een halte.
-
-    API-responses kunnen dicts zijn, maar soms ook strings (of None). We vangen dat netjes af.
-    """
-    if isinstance(stop, str):
-        s = stop.strip()
-        return s if s else "Onbekende halte"
-    if not isinstance(stop, dict):
-        return "Onbekende halte"
-
-    name = stop.get("ScheduleName") or stop.get("StopName") or stop.get("Name") or "Onbekende halte"
-    town = stop.get("Town") or stop.get("Place") or ""
-    code = stop.get("StopCode") or stop.get("Code") or ""
-
-    name = str(name).strip() if name is not None else "Onbekende halte"
-    town = str(town).strip() if town is not None else ""
-    code = str(code).strip() if code is not None else ""
-
-    if town and code:
-        return f"{name} — {town} ({code})"
-    if town:
-        return f"{name} — {town}"
-    if code:
-        return f"{name} ({code})"
-    return name
-
-
-def _normalize_stop_results(res):
-    """Maak van wat de API ook teruggeeft altijd een lijst met dicts/strings."""
-    if res is None:
-        return []
-    # Soms: {"Stops": [...]} of {"results": [...]}
-    if isinstance(res, dict):
-        for k in ("Stops", "stops", "Results", "results", "data"):
-            if k in res and isinstance(res.get(k), list):
-                return res.get(k) or []
-        # fallback: één record
-        return [res]
-    if isinstance(res, list):
-        return res
-    # fallback: één string/waarde
-    return [res]
-
-
-def _build_options(res_list):
-    """Bouw een stabiele, unieke mapping label -> record."""
-    options = {}
-    counts = collections.defaultdict(int)
-
-    for item in res_list:
-        if item is None:
-            continue
-        label = _stop_label(item)
-        counts[label] += 1
-        key = label if counts[label] == 1 else f"{label} · #{counts[label]}"
-        options[key] = item
-    return options
+def _stop_label(stop: dict) -> str:
+    name = stop.get("ScheduleName") or stop.get("StopName") or "Onbekende halte"
+    town = stop.get("Town") or ""
+    code = stop.get("StopCode") or ""
+    return f"{name} ({code})" if not town else f"{name} — {town} ({code})"
 
 with tab1:
     q = st.text_input(
         "Zoek halte",
-        placeholder="bijv. Huiz...derzee, Amsterdam Centraal, Gouda Station…",
+        placeholder="bijv. Huizen Zuiderzee, Amsterdam Centraal, Gouda Station…",
         key="ov_q",
     ).strip()
 
-    colA, colB, colC = st.columns([0.45, 0.30, 0.25], gap="small")
+    colA, colB = st.columns([0.65, 0.35], gap="small")
     with colA:
         go = st.button("Zoek", type="primary", use_container_width=True)
     with colB:
-        auto = st.toggle("Zoek tijdens typen", value=True)
-    with colC:
         debug = st.toggle("Debug tonen", value=False)
 
-    # Auto-zoeken: laat de API niet op élke letter volledig losgaan.
-    # We zoeken als de query verandert én minstens 2 tekens heeft, met een kleine throttle.
-    minlen = 2
-    now = time.time()
+    # --- Live zoeken terwijl je typt (vanaf 2 letters) ---
+    # Streamlit rerunt bij elke toetsaanslag: we 'throttlen' met een simpele tijd-check.
+    import time
+
     last_q = st.session_state.get("ov_last_q", "")
-    last_t = float(st.session_state.get("ov_last_t", 0.0))
+    last_t = st.session_state.get("ov_last_t", 0.0)
 
     should_search = False
-    if go and q:
-        should_search = True
-    elif auto and q and len(q) >= minlen and q != last_q and (now - last_t) >= 0.8:
-        should_search = True
+    if q and len(q) >= 2 and q != last_q:
+        # max ~2 searches per seconde
+        if time.time() - float(last_t or 0.0) > 0.45:
+            should_search = True
 
-    if should_search:
+    if (go and q) or should_search:
         try:
-            with st.spinner("Zoeken… even geduld (max ~12 sec)."):
-                res = search_stops_smart(q)
+            with st.spinner("Zoeken…"):
+                raw = search_stops_smart(q)
+
+            # Normaliseer: we willen altijd een lijst van dicts (of lege lijst)
+            res = []
+            if isinstance(raw, dict):
+                # Sommige wrappers geven {"Stops":[...]} of {"results":[...]}
+                raw = raw.get("Stops") or raw.get("results") or raw.get("stops") or []
+            if isinstance(raw, list):
+                for item in raw:
+                    if isinstance(item, dict):
+                        res.append(item)
+                    elif isinstance(item, str) and item.strip():
+                        res.append({"StopName": item.strip()})
+            elif isinstance(raw, str) and raw.strip():
+                res = [{"StopName": raw.strip()}]
+
             st.session_state.ov_last_results = res
             st.session_state.ov_last_q = q
-            st.session_state.ov_last_t = now
+            st.session_state.ov_last_t = time.time()
         except Exception as e:
             st.session_state.ov_last_results = []
             st.error(f"Zoeken faalde: {e}")
 
-    res_raw = st.session_state.get("ov_last_results", [])
-    res = _normalize_stop_results(res_raw)
-
+    res = st.session_state.get("ov_last_results", []) or []
     if res:
         st.caption(f"Aantal resultaten: {len(res)}")
+
         if debug:
             st.markdown("**Voorbeeld record:**")
             st.json(res[0])
 
-        options = _build_options(res)
-        if options:
-            choice = st.selectbox("Kies halte", list(options.keys()), key="ov_pick")
-            if st.button("Toon vertrektijden", use_container_width=True, key="ov_show_depart"):
-                st.session_state.ov_selected_stop = options[choice]
-        else:
-            st.warning("Geen bruikbare halte-items gevonden in de API-respons.")
+        # labels -> item, maar voorkom dubbele keys
+        options = {}
+        counts = {}
+        for s in res:
+            label = _stop_label(s)
+            counts[label] = counts.get(label, 0) + 1
+            if counts[label] > 1:
+                label = f"{label}  #{counts[label]}"
+            options[label] = s
+
+        choice = st.selectbox("Kies halte", list(options.keys()), key="ov_pick")
+
+        if st.button("Toon vertrektijden", use_container_width=True, key="ov_show_depart"):
+            st.session_state.ov_selected_stop = options.get(choice)
 
     sel = st.session_state.get("ov_selected_stop")
     if sel:
+
         st.markdown("## Vertrektijden")
         st.caption(_stop_label(sel))
         try:
-            stopcode = sel.get("StopCode") if isinstance(sel, dict) else None
-            if not stopcode:
-                st.error("Ik kan geen haltecode vinden bij deze keuze. Probeer een andere halte (of typ iets specifieker).")
-            else:
-                with st.spinner("Vertrektijden ophalen…"):
+            with st.spinner("Vertrektijden ophalen…"):
+                stopcode = sel.get("StopCode") if isinstance(sel, dict) else None
+                if not stopcode:
+                    st.warning("Deze keuze heeft geen StopCode. Kies een andere halte uit de lijst.")
+                    dep = None
+                else:
                     dep = departures_by_stopcode(stopcode)
+
+            if dep:
                 _departures_table(dep)
         except Exception as e:
             st.error(f"Vertrektijd.info fout: {e}")
@@ -212,7 +180,7 @@ with tab2:
                     def _dist(s):
                         return float(s.get("Distance", 9e9)) if s.get("Distance") is not None else 9e9
                     stops_sorted = sorted(stops, key=_dist)
-                    options = _build_options(stops_sorted[:25])
+                    options = { _stop_label(s): s for s in stops_sorted[:25] }
                     choice = st.selectbox("Dichtbijzijnde haltes", list(options.keys()), key="ov_geo_pick")
                     if st.button("Toon vertrektijden (dichtbij)", use_container_width=True, key="ov_geo_show"):
                         st.session_state.ov_selected_stop = options[choice]
