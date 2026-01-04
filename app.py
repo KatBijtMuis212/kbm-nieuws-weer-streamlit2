@@ -21,6 +21,17 @@ st.markdown("# 🗞️ KbM Nieuws")
 
 # Render progressively with spinners so you SEE progress instead of endless white loader
 with st.spinner("Net binnen laden…"):
+    try:
+        render_section(
+            "Net binnen",
+            hours_limit=hrs,
+            query=query,
+            max_items=80,
+            thumbs_n=6,
+            view="home"
+        )
+    except Exception as e:
+        st.error(e)
     
 # Als er een artikel is aangeklikt (via ?section=...&open=...), toon alleen die sectie (artikelview) en stop.
 try:
