@@ -35,9 +35,13 @@ def render_item_preview(it: dict):
     with cols[1]:
         b1, b2 = st.columns(2, gap="small")
         with b1:
-            if st.button("⭐ Lees later", key=f"bm_prev_{it['id']}", use_container_width=True):
-                add_bookmark(it)
-                st.toast("Toegevoegd aan lees later ⭐")
+            if st.button(
+    "⭐ Lees later",
+    key=f"bm_prev_{it['id']}_{it.get('source_label','')}_{it.get('dt','')}",
+    use_container_width=True
+):
+    add_bookmark(it)
+    st.toast("Toegevoegd aan lees later ⭐")
         with b2:
             st.link_button("🔎 Open", url=article_url(it.get("link","")), use_container_width=True)
 
