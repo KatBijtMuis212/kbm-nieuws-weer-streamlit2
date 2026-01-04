@@ -255,9 +255,9 @@ def pretty_dt(dt: Optional[datetime]) -> str:
     return dt.astimezone().strftime("%d-%m %H:%M")
 
 def within_hours(dt: Optional[datetime], hours: int) -> bool:
+    # Sommige feeds (o.a. Feedburner) leveren geen goede datum; dan willen we items niet weggooien.
     if not dt:
-        return False
-    # dt is UTC in deze app; vergelijk ook in UTC
+        return True
     return dt >= datetime.now(timezone.utc) - timedelta(hours=hours)
 
 def item_id(item: Dict[str, Any]) -> str:
@@ -265,84 +265,26 @@ def item_id(item: Dict[str, Any]) -> str:
     return hashlib.sha1(base).hexdigest()[:16]
 
 def _first_image_from_entry(entry: Any) -> Optional[str]:
-    """
-    Best-effort image extraction for RSS/Atom entries.
-
-    Supports:
-      - media:content (media_content) as dict or list
-      - media:thumbnail (media_thumbnail) as dict or list
-      - enclosures + links/enclosures
-      - content:encoded / entry.content[0].value
-      - <img> tags inside summary/description/content (src, data-src, srcset)
-    """
     try:
-        # 1) media_content can be dict or list
-        mc = entry.get("media_content")
-        if isinstance(mc, dict) and mc.get("url"):
-            return mc["url"]
-        if isinstance(mc, list):
-            for x in mc:
-                if isinstance(x, dict) and x.get("url"):
-                    return x["url"]
+        mc = entry.get("media_content") or []
+        if isinstance(mc, list) and mc and mc[0].get("url"):
+            return mc[0]["url"]
 
-        # 2) media_thumbnail
-        mt = entry.get("media_thumbnail")
-        if isinstance(mt, dict) and mt.get("url"):
-            return mt["url"]
-        if isinstance(mt, list):
-            for x in mt:
-                if isinstance(x, dict) and x.get("url"):
-                    return x["url"]
-
-        # 3) enclosures
         enc = entry.get("enclosures") or []
         for e in enc:
-            if not isinstance(e, dict):
-                continue
-            href = e.get("href") or e.get("url")
-            typ = (e.get("type") or "").lower()
-            if href and (typ.startswith("image") or typ == ""):
+            href = e.get("href")
+            if href and (e.get("type","").startswith("image") or e.get("type","")== ""):
                 return href
 
-        # 4) links (sometimes enclosures)
         links = entry.get("links") or []
         for l in links:
-            if not isinstance(l, dict):
-                continue
-            href = l.get("href")
-            typ = (l.get("type") or "").lower()
-            rel = (l.get("rel") or "").lower()
-            if href and (typ.startswith("image") or rel == "enclosure"):
-                return href
+            if (l.get("type","") or "").startswith("image") and l.get("href"):
+                return l["href"]
 
-        def _img_from_html(html_text: str) -> Optional[str]:
-            if not html_text:
-                return None
-            # src or data-src (supports single/double quotes)
-            m = re.search(r'<img[^>]+(?:src|data-src)=["\']([^"\']+)["\']', html_text, re.I)
-            if m:
-                return m.group(1)
-            # srcset: pick first
-            m = re.search(r'srcset=["\']([^"\']+)["\']', html_text, re.I)
-            if m:
-                first = m.group(1).split(",")[0].strip().split(" ")[0].strip()
-                return first or None
-            return None
-
-        # 5) content/content:encoded
-        content = entry.get("content")
-        if isinstance(content, list) and content:
-            c0 = content[0]
-            val = c0.get("value") if isinstance(c0, dict) else ""
-            got = _img_from_html(val or "")
-            if got:
-                return got
-
-        # 6) summary/description
-        summ = entry.get("summary") or entry.get("description") or ""
-        got = _img_from_html(summ)
-        if got:
-            return got
+        summ = entry.get("summary","") or ""
+        m = re.search(r'<img[^>]+src="([^"]+)"', summ)
+        if m:
+            return m.group(1)
     except Exception:
         pass
     return None
@@ -398,22 +340,12 @@ def _scrape_rtl_listing(list_url: str, max_items: int = 40) -> List[Dict[str, An
             if len(title) < 12:
                 continue
 
-            img = None
-            try:
-                imgtag = a.find("img")
-                if imgtag:
-                    img = imgtag.get("src") or imgtag.get("data-src")
-                    if not img and imgtag.get("srcset"):
-                        img = imgtag.get("srcset").split(",")[0].strip().split(" ")[0].strip()
-            except Exception:
-                img = None
-
             out.append({
                 "title": title,
                 "link": href,
                 "dt": None,
                 "rss_summary": "",
-                "img": img,
+                "img": None,
                 "source_label": "rtl_direct",
             })
             if len(out) >= max_items:
@@ -422,6 +354,27 @@ def _scrape_rtl_listing(list_url: str, max_items: int = 40) -> List[Dict[str, An
         return out
     return out
 
+
+def _google_news_rss_site(site: str, extra_query: str = "", max_items: int = 40) -> List[Dict[str, Any]]:
+    # Fallback voor sites die (deels) JS-driven zijn, zoals RTL.
+    # We wijzigen GEEN vaste feeds; dit wordt alleen gebruikt als directe scrape leeg is.
+    q = f"site:{site} {extra_query}".strip()
+    rss = "https://news.google.com/rss/search?q=" + quote(q) + "&hl=nl&gl=NL&ceid=NL:nl"
+    feed = _fetch_feed(rss)
+    out: List[Dict[str, Any]] = []
+    for entry in (feed.entries or [])[:max_items]:
+        title = (entry.get("title") or "").strip()
+        link = (entry.get("link") or "").strip()
+        dt = _parse_dt(entry)
+        out.append({
+            "title": title,
+            "link": link,
+            "dt": dt,
+            "summary": (entry.get("summary") or "").strip(),
+            "img": None,
+            "source_label": "google_news_rss",
+        })
+    return out
 def collect_items(feed_labels: List[str], query: Optional[str]=None, max_per_feed: int=25, **_ignored) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     items: List[Dict[str, Any]] = []
     for label in feed_labels:
@@ -430,13 +383,16 @@ def collect_items(feed_labels: List[str], query: Optional[str]=None, max_per_fee
             continue
 
         if url == "RTL_DIRECT_NEWS":
-            items.extend(_scrape_rtl_listing("https://www.rtl.nl/nieuws", max_items=max_per_feed))
+            got = _scrape_rtl_listing("https://www.rtl.nl/nieuws", max_items=max_per_feed)
+            if not got:
+                got = _google_news_rss_site("rtl.nl", extra_query="nieuws", max_items=max_per_feed)
+            items.extend(got)
             continue
         if url == "RTL_DIRECT_BOULEVARD":
-            items.extend(_scrape_rtl_listing("https://www.rtl.nl/boulevard", max_items=max_per_feed))
-            continue
-        if url == "RTL_DIRECT_BINNENLAND":
-            items.extend(_scrape_rtl_listing("https://www.rtl.nl/nieuws/binnenland", max_items=max_per_feed))
+            got = _scrape_rtl_listing("https://www.rtl.nl/boulevard", max_items=max_per_feed)
+            if not got:
+                got = _google_news_rss_site("rtl.nl", extra_query="boulevard", max_items=max_per_feed)
+            items.extend(got)
             continue
 
         feed = _fetch_feed(url)
@@ -453,17 +409,11 @@ def collect_items(feed_labels: List[str], query: Optional[str]=None, max_per_fee
             except Exception:
                 dt = None
 
-            summary = (entry.get("summary") or entry.get("description") or "").strip()
-            if not summary:
-                c = entry.get("content")
-                if isinstance(c, list) and c and isinstance(c[0], dict):
-                    summary = (c[0].get("value") or "").strip()
-
             items.append({
                 "title": title,
                 "link": link,
                 "dt": dt,
-                "rss_summary": summary,
+                "rss_summary": (entry.get("summary") or "").strip(),
                 "img": _first_image_from_entry(entry),
                 "source_label": label,
             })
@@ -479,12 +429,7 @@ def _clean_text(s: str) -> str:
     return re.sub(r"\s+", " ", (s or "")).strip()
 
 def fetch_readable_text(url: str) -> Tuple[str, str]:
-    try:
-        r = requests.get(url, headers=HEADERS, timeout=15)
-        if not r.ok:
-            return "", ""
-        soup = BeautifulSoup(r.text or "", "lxml")
-
+    def _extract_from_soup(soup: BeautifulSoup) -> Tuple[str, str]:
         title = ""
         h1 = soup.select_one("h1")
         if h1:
@@ -492,6 +437,63 @@ def fetch_readable_text(url: str) -> Tuple[str, str]:
         if not title and soup.title and soup.title.string:
             title = _clean_text(soup.title.string)
 
+        # 1) JSON-LD articleBody
+        try:
+            for s in soup.find_all("script", attrs={"type": "application/ld+json"}):
+                txt = (s.string or "").strip()
+                if not txt:
+                    continue
+                data = json.loads(txt)
+                bodies = []
+
+                def walk(obj):
+                    if isinstance(obj, dict):
+                        t = obj.get("@type")
+                        if isinstance(t, list):
+                            is_article = any(x in ("NewsArticle","Article","ReportageNewsArticle") for x in t)
+                        else:
+                            is_article = t in ("NewsArticle","Article","ReportageNewsArticle")
+                        if is_article:
+                            ab = obj.get("articleBody")
+                            if isinstance(ab, str) and len(ab.strip()) > 120:
+                                bodies.append(ab.strip())
+                        for v in obj.values():
+                            walk(v)
+                    elif isinstance(obj, list):
+                        for v in obj:
+                            walk(v)
+
+                walk(data)
+                if bodies:
+                    return title, "\n\n".join(bodies).strip()
+        except Exception:
+            pass
+
+        # 2) __NEXT_DATA__ (Next.js)
+        try:
+            nd = soup.find("script", id="__NEXT_DATA__")
+            if nd and (nd.string or "").strip():
+                data = json.loads(nd.string)
+                blobs = []
+
+                def walk(obj):
+                    if isinstance(obj, dict):
+                        for k, v in obj.items():
+                            if k in ("text","body","articleBody","content","contentText") and isinstance(v, str) and len(v) > 120:
+                                blobs.append(v)
+                            walk(v)
+                    elif isinstance(obj, list):
+                        for v in obj:
+                            walk(v)
+
+                walk(data)
+                if blobs:
+                    blobs.sort(key=len, reverse=True)
+                    return title, blobs[0].strip()
+        except Exception:
+            pass
+
+        # 3) klassieke HTML containers
         for tag in soup.select("script, style, noscript, iframe"):
             tag.decompose()
 
@@ -501,14 +503,14 @@ def fetch_readable_text(url: str) -> Tuple[str, str]:
         if not containers and soup.body:
             containers = [soup.body]
 
-        paras: List[str] = []
+        paras = []
         for c in containers[:3]:
             for p in c.select("p, li"):
                 t = _clean_text(p.get_text(" ", strip=True))
                 if len(t) >= 40:
                     paras.append(t)
 
-        out: List[str] = []
+        out = []
         seen = set()
         for t in paras:
             key = t[:140]
@@ -518,8 +520,37 @@ def fetch_readable_text(url: str) -> Tuple[str, str]:
             out.append(t)
 
         return title, "\n\n".join(out).strip()
+
+    # Fetch 1
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=18)
+        if not r.ok:
+            return "", ""
+        soup = BeautifulSoup(r.text or "", "lxml")
+        title, text = _extract_from_soup(soup)
+        if text and len(text) > 200:
+            return title, text
     except Exception:
-        return "", ""
+        pass
+
+    # Fetch 2: headers iets anders (helpt soms bij consent/edge)
+    try:
+        hdr = dict(HEADERS)
+        hdr.update({
+            "Cache-Control": "no-cache",
+            "Pragma": "no-cache",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        })
+        r2 = requests.get(url, headers=hdr, timeout=18)
+        if r2.ok:
+            soup2 = BeautifulSoup(r2.text or "", "lxml")
+            title2, text2 = _extract_from_soup(soup2)
+            if text2 and len(text2) > 200:
+                return title2, text2
+    except Exception:
+        pass
+
+    return "", ""
 
 def _meta(soup: BeautifulSoup, key: str) -> str:
     tag = soup.find("meta", attrs={"property": key}) or soup.find("meta", attrs={"name": key})
@@ -545,19 +576,16 @@ def fetch_article_media(url: str) -> Dict[str, str]:
         media["audio"] = _meta(soup, "og:audio") or _meta(soup, "og:audio:url")
         media["poster"] = _meta(soup, "og:image") or _meta(soup, "twitter:image")
 
-        # --- JSON-LD (veel sites, incl. NU.nl) ---
-        # zoekt naar VideoObject contentUrl/embedUrl
+        # JSON-LD (VideoObject)
         for s in soup.find_all("script", attrs={"type": "application/ld+json"}):
             try:
                 txt = (s.string or "").strip()
                 if not txt:
                     continue
-                import json
                 data = json.loads(txt)
 
                 def walk(obj):
                     if isinstance(obj, dict):
-                        # VideoObject
                         t = obj.get("@type")
                         if isinstance(t, list):
                             is_video = "VideoObject" in t
