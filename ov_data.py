@@ -1,24 +1,23 @@
 # -*- coding: utf-8 -*-
 """
-KbM OV module (NL) — realtime vertrektijden + simpele reisplanner-link.
+KbM OV v2 — zoeken op HALTENAAM/PLAATS (+ optioneel LIVE locatie) zonder codes.
 
-Provider fallback:
-- OVAPI (KV78Turbo) via v0.ovapi.nl (geen API key nodig) voor bus/tram/metro/veer.
-  Endpoints (JSON):
-    https://v0.ovapi.nl/stopareacode/{CODE}/departures
-    https://v0.ovapi.nl/tpc/{TPC}/departures
+1) Vertrektijd.info (aanrader) — ondersteunt departures via /departures/_nametown/{town}/{stop}
+   -> Vereist API key in Streamlit Secrets: VERTREKTIJD_API_KEY
 
-Optioneel (mooier zoeken op halte-naam + plaats):
-- Vertrektijd.info Client API (API key nodig) — niet verplicht voor de basis.
+2) OVAPI fallback — werkt zonder key, maar vereist TPC of StopAreaCode.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
-import requests
 import datetime as dt
+import requests
 
-DEFAULT_TIMEOUT = 10
+UA = "KbMNieuwsOV/2.0 (+streamlit)"
+HEADERS = {"User-Agent": UA, "Accept-Language": "nl-NL,nl;q=0.9,en;q=0.8"}
+
+DEFAULT_TIMEOUT = 12
 
 @dataclass
 class Departure:
@@ -33,41 +32,30 @@ class Departure:
     raw: dict
 
 def _to_dt(ts: str) -> Optional[dt.datetime]:
-    """
-    OVAPI uses ISO-like timestamps. Parse best-effort.
-    """
     if not ts:
         return None
     try:
-        # Example often: "2026-01-04T12:34:56+01:00"
         return dt.datetime.fromisoformat(ts.replace("Z", "+00:00"))
     except Exception:
         return None
 
-def fetch_ovapi_departures(code: str, kind: str = "stopareacode", timeout: int = DEFAULT_TIMEOUT) -> Tuple[List[Departure], dict]:
-    """
-    kind: 'stopareacode' or 'tpc'
-    Returns (departures_sorted, raw_json)
-    """
+# ---------- OVAPI (codes) ----------
+def fetch_ovapi_departures(code: str, kind: str = "tpc", timeout: int = DEFAULT_TIMEOUT) -> List[Departure]:
     kind = kind.lower().strip()
     if kind not in ("stopareacode", "tpc"):
         raise ValueError("kind must be 'stopareacode' or 'tpc'")
     url = f"https://v0.ovapi.nl/{kind}/{code}/departures"
-    r = requests.get(url, timeout=timeout, headers={"User-Agent": "KbMNieuws/1.0 (+streamlit)"})
+    r = requests.get(url, timeout=timeout, headers=HEADERS)
     r.raise_for_status()
     data = r.json()
 
     deps: List[Departure] = []
 
-    # Response shape:
-    # stopareacode: { "StopAreaCode": { "STOP": { "Passes": { ... }}}}
-    # tpc:          { "TimingPointCode": { "Passes": { ... }}}
-    # We'll normalize by walking all dicts and collecting entries with expected keys.
     def ingest_pass(p: dict):
         t = _to_dt(p.get("ExpectedDepartureTime") or p.get("TargetDepartureTime") or p.get("DepartureTime"))
         if not t:
             return
-        line = str(p.get("LineNumber") or p.get("LinePlanningNumber") or p.get("LinePlanningNumber") or "").strip()
+        line = str(p.get("LinePublicNumber") or p.get("LineNumber") or p.get("LinePlanningNumber") or "").strip()
         dest = str(p.get("DestinationName50") or p.get("DestinationName") or "").strip()
         delay = p.get("DelaySeconds")
         try:
@@ -99,30 +87,57 @@ def fetch_ovapi_departures(code: str, kind: str = "stopareacode", timeout: int =
                 walk(v)
 
     walk(data)
-
     deps.sort(key=lambda d: d.departure_time)
-    return deps, data
+    return deps
 
-def human_departure(d: Departure, now: Optional[dt.datetime] = None) -> str:
+# ---------- Vertrektijd.info (naam + plaats) ----------
+def fetch_vertrektijd_departures(town: str, stop: str, api_key: str, timeout: int = DEFAULT_TIMEOUT) -> List[Departure]:
+    """
+    Uses: https://api.vertrektijd.info/departures/_nametown/{town}/{stop}/
+    Auth header: X-Vertrektijd-Client-Api-Key
+    """
+    town = town.strip()
+    stop = stop.strip()
+    if not (town and stop):
+        return []
+    url = f"https://api.vertrektijd.info/departures/_nametown/{requests.utils.quote(town)}/{requests.utils.quote(stop)}/"
+    headers = dict(HEADERS)
+    headers["X-Vertrektijd-Client-Api-Key"] = api_key
+    r = requests.get(url, headers=headers, timeout=timeout)
+    r.raise_for_status()
+    data = r.json()
+
+    out: List[Departure] = []
+    # shape: list of departures, each with time fields. We'll parse best-effort.
+    for p in data if isinstance(data, list) else data.get("departures", []):
+        t = _to_dt(p.get("departure") or p.get("expected_departure") or p.get("planned_departure"))
+        if not t:
+            continue
+        delay_sec = None
+        if p.get("delay"):
+            try:
+                # delay is often minutes; accept both
+                delay_sec = int(p["delay"]) * 60
+            except Exception:
+                delay_sec = None
+        out.append(Departure(
+            line=str(p.get("line") or p.get("line_public_number") or "—"),
+            destination=str(p.get("destination") or "—"),
+            departure_time=t,
+            delay_sec=delay_sec,
+            transport_type=p.get("type"),
+            operator=p.get("operator"),
+            platform=p.get("platform") or p.get("track"),
+            realtime=True if (p.get("expected_departure") or p.get("realtime")) else False,
+            raw=p,
+        ))
+    out.sort(key=lambda d: d.departure_time)
+    return out
+
+def human_minutes(d: Departure, now: Optional[dt.datetime] = None) -> tuple[str,int]:
     now = now or dt.datetime.now(dt.timezone.utc)
     t = d.departure_time
     if t.tzinfo is None:
         t = t.replace(tzinfo=dt.timezone.utc)
-    delta = (t - now).total_seconds()
-    mins = int(round(delta / 60))
-    hhmm = t.astimezone().strftime("%H:%M")
-    if mins >= 0:
-        return f"{hhmm} (over {mins} min)"
-    return f"{hhmm} ({abs(mins)} min geleden)"
-
-def build_9292_link(from_q: str, to_q: str) -> str:
-    """
-    Simpele planner-link (geen scraping): open 9292 met ingevulde velden.
-    """
-    import urllib.parse
-    base = "https://9292.nl/reisadvies"
-    qs = {
-        "van": from_q,
-        "naar": to_q,
-    }
-    return base + "?" + urllib.parse.urlencode(qs)
+    mins = int(round((t - now).total_seconds() / 60))
+    return (t.astimezone().strftime("%H:%M"), mins)
