@@ -190,11 +190,15 @@ def _fetch_departures_for_stop(stop: dict):
 # TAB 1 — Zoeken (live)
 # ----------------------------
 with tab1:
-    try:
-        from streamlit_keyup import st_keyup  # type: ignore
-        q_raw = st_keyup("Zoek halte", placeholder="bijv. Utrecht Centraal, Huizen Zuiderzee…", key="ov_q") or ""
-    except Exception:
-        q_raw = st.text_input("Zoek halte", placeholder="(installeer streamlit-keyup voor live typen)", key="ov_q_fallback") or ""
+from streamlit_keyup import st_keyup
+
+q_raw = st_keyup(
+    "Zoek halte",
+    placeholder="bijv. Utrecht Centraal, Huizen Zuiderzee…",
+    key="ov_q"
+) or ""
+
+st.caption("Live typing: ✅ (keyup actief)")
 
     q = q_raw.strip()
 
