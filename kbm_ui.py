@@ -7,6 +7,8 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import streamlit as st
+import requests
+from bs4 import BeautifulSoup
 
 # Alles wat we nodig hebben komt uit common.py. Als iets ontbreekt, vangen we het af.
 try:
@@ -322,6 +324,89 @@ def _list_row(it: Dict[str, Any], section_key: str):
     )
 
 
+@st.cache_data(show_spinner=False, ttl=60 * 30)
+def _fetch_article_text(url: str) -> str:
+    """Probeer de volledige artikeltekst op te halen via de originele URL.
+
+    Werkt heuristisch (geen perfecte scraper), maar is veel beter dan alleen een RSS summary.
+    """
+    if not url:
+        return ""
+    try:
+        r = requests.get(
+            url,
+            timeout=12,
+            headers={
+                "User-Agent": "KbMNieuws/1.0 (Streamlit)",
+                "Accept": "text/html,application/xhtml+xml",
+            },
+        )
+        r.raise_for_status()
+    except Exception:
+        return ""
+
+    html = r.text or ""
+    if not html.strip():
+        return ""
+
+    soup = BeautifulSoup(html, "html.parser")
+
+    # weg met rommel
+    for tag in soup(["script", "style", "noscript", "svg", "iframe"]):
+        tag.decompose()
+
+    # prefer <article>
+    node = soup.find("article")
+    if node is None:
+        # fallback: kies het grootste 'main' of een div met meeste tekst
+        node = soup.find("main")
+    if node is None:
+        # grootste div/section
+        best = None
+        best_len = 0
+        for cand in soup.find_all(["div", "section"], limit=80):
+            txt = cand.get_text(" ", strip=True)
+            if len(txt) > best_len:
+                best = cand
+                best_len = len(txt)
+        node = best or soup.body or soup
+
+    # verwijder typische navigatieblokken binnen node
+    for sel in ["header", "footer", "nav", "aside", "form"]:
+        for t in node.find_all(sel):
+            t.decompose()
+
+    # pak paragrafen
+    paras = []
+    for p in node.find_all(["p", "h2", "h3"], limit=120):
+        txt = p.get_text(" ", strip=True)
+        txt = re.sub(r"\s+", " ", txt).strip()
+        if not txt:
+            continue
+        # filter hele korte rommel
+        if len(txt) < 30 and txt.endswith(":"):
+            continue
+        paras.append(txt)
+
+    # fallback op totale tekst
+    if not paras:
+        txt = node.get_text("\n", strip=True)
+        txt = re.sub(r"\n{3,}", "\n\n", txt)
+        return txt.strip()
+
+    # de-dup
+    out = []
+    seen = set()
+    for t in paras:
+        key = t[:120]
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(t)
+
+    return "\n\n".join(out).strip()
+
+
 def _render_article(it: Dict[str, Any], section_key: str):
     title = _get_title(it)
     link = _get_link(it)
@@ -338,7 +423,12 @@ def _render_article(it: Dict[str, Any], section_key: str):
         except TypeError:
             st.image(img, use_container_width=True)
 
-    body = it.get("summary") or it.get("content") or it.get("description") or ""
+    body = it.get("content") or it.get("summary") or it.get("description") or ""
+    # Als RSS geen volledige tekst geeft: probeer live te scrapen.
+    if (not body) or (isinstance(body, str) and len(body.strip()) < 200):
+        scraped = _fetch_article_text(link)
+        if scraped and len(scraped) > 200:
+            body = scraped
     if body:
         st.markdown(body, unsafe_allow_html=True)
     else:
