@@ -215,8 +215,8 @@ FEEDS: Dict[str, str] = {
 CATEGORY_FEEDS: Dict[str, List[str]] = {
     "Net binnen": ["nos_binnenland", "nu_algemeen", "rtvmh", "west_algemeen", "nh_gooi", "rtl_nieuws"],
 
-    "Binnenland": ["nos_binnenland", "nd_binnenland", "ad_home", "trouw_voorpagina", "rtl_binnenland"],
-    "Buitenland": ["nos_buitenland", "nd_buitenland", "nrc_main", "vk_achtergrond", "rtl_nieuws"],
+    "Binnenland": ["nos_binnenland", "nd_binnenland", "ad_home...voorpagina", "trouw_voorpagina"],
+    "Buitenland": ["nos_buitenland", "nd_buitenland", "nrc_main", "vk_achtergrond"],
     "Show": ["nu_entertainment", "nu_achterklap", "ad_sterren", "ad_show", "ad_showbytes", "rtl_boulevard"],
     "Lokaal": ["rtvmh", "west_bodegraven", "west_gouda", "west_alphen"],
     "Sport": ["nos_sport", "nos_f1", "nu_sport", "west_sport", "nrc_sport", "trouw_sport", "rtl_nieuws"],
@@ -507,17 +507,3 @@ def openai_summarize(model: str, api_key: str, prompt: str) -> str:
         return "\n\n".join(out_parts).strip()
     except Exception:
         return ""
-
-
-# --- Backwards-compatible helpers (some pages expect these) ---
-def pre(s: str | None) -> str:
-    """Safe strip helper used by older UI/pages."""
-    return (s or "").strip()
-
-def fetch_art(url: str, timeout: int = 12) -> str:
-    """Compatibility alias: fetch full readable text for an article URL."""
-    try:
-        return fetch_readable_text(url, timeout=timeout)
-    except Exception:
-        return ""
-
