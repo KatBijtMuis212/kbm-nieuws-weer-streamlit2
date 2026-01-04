@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import html
 import hashlib
 import re
 import time
@@ -508,3 +509,10 @@ def openai_summarize(model: str, api_key: str, prompt: str) -> str:
         return "\n\n".join(out_parts).strip()
     except Exception:
         return ""
+
+
+# ---------- UI helpers (html escape) ----------
+
+def pre(s: object) -> str:
+    """Return a safe <pre> block for debugging output in Streamlit."""
+    return f"<pre>{html.escape(str(s))}</pre>"
