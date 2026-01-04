@@ -1,8 +1,9 @@
 # kbm_ui.py — UI helpers voor KbM Nieuws (hero + thumbnails) + stabiele keys
 from __future__ import annotations
 
-import re
 import base64
+import re
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import streamlit as st
@@ -22,14 +23,10 @@ except Exception as e:  # pragma: no cover
     raise ImportError(f"Kon common.py niet importeren: {e}")
 
 
-# ---------- Kleine utils ----------
+# ---------- Keys / utils ----------
 
 def _uniq_key(prefix: str) -> str:
-    """Return a unique key for this session.
-
-    Streamlit vereist unieke keys per element. Voor navigatieknoppen
-    (zoals 'Meer <categorie>') is een oplopende teller per sessie prima.
-    """
+    """Return a unique key for this session (prevents StreamlitDuplicateElementKey)."""
     st.session_state.setdefault("_kbm_keyseq", 0)
     st.session_state["_kbm_keyseq"] += 1
     return f"{prefix}_{st.session_state['_kbm_keyseq']}"
@@ -54,15 +51,71 @@ def _flatten(items: Any) -> List[Dict[str, Any]]:
     return out
 
 
-def _norm_title(t: str) -> str:
-    return re.sub(r"\s+", " ", (t or "").strip())
-
-
 def _safe_str(x: Any) -> str:
     return "" if x is None else str(x)
 
 
-# Een nette, lichte placeholder thumbnail (data-uri SVG), zodat elk item altijd een thumb heeft.
+def _norm_title(t: str) -> str:
+    return re.sub(r"\s+", " ", (t or "").strip())
+
+
+def _get_title(it: Dict[str, Any]) -> str:
+    # Verschillende bronnen noemen dit anders
+    for k in ("title", "titel", "headline", "name"):
+        v = it.get(k)
+        if isinstance(v, str) and v.strip():
+            return _norm_title(v)
+    # fallback op summary
+    v = it.get("summary") or it.get("description") or it.get("content")
+    if isinstance(v, str) and v.strip():
+        return _norm_title(v)[:140]
+    return "(zonder titel)"
+
+
+def _get_link(it: Dict[str, Any]) -> str:
+    for k in ("link", "url", "href"):
+        v = it.get(k)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    return ""
+
+
+def _get_dt(it: Dict[str, Any]) -> Any:
+    # common gebruikt meestal "dt", maar sommige feeds kunnen "published"/"date" hebben
+    for k in ("dt", "published", "date", "updated"):
+        v = it.get(k)
+        if v is not None and v != "":
+            return v
+    return None
+
+
+def _dt_sort_key(v: Any) -> float:
+    """Robuuste sorteersleutel: accepteert datetime / int/float / ISO string."""
+    if v is None:
+        return 0.0
+    if isinstance(v, (int, float)):
+        return float(v)
+    if isinstance(v, datetime):
+        try:
+            return v.timestamp()
+        except Exception:
+            return 0.0
+    if isinstance(v, str):
+        s = v.strip()
+        if not s:
+            return 0.0
+        # ISO-ish
+        try:
+            # handle Z
+            s2 = s.replace("Z", "+00:00")
+            return datetime.fromisoformat(s2).timestamp()
+        except Exception:
+            return 0.0
+    return 0.0
+
+
+# ---------- Placeholder thumbnail (altijd een plaatje) ----------
+
 _PLACEHOLDER_SVG = """
 <svg xmlns="http://www.w3.org/2000/svg" width="220" height="220" viewBox="0 0 220 220">
   <defs>
@@ -90,7 +143,6 @@ _PLACEHOLDER_URI = _svg_data_uri(_PLACEHOLDER_SVG)
 
 
 def _pick_img(it: Dict[str, Any]) -> str:
-    # common.py gebruikt meestal "img". We ondersteunen meerdere keys.
     for k in ("img", "image", "thumbnail", "thumb", "og_image", "media", "media_url"):
         v = it.get(k)
         if isinstance(v, str) and v.strip():
@@ -102,42 +154,40 @@ def _img_or_placeholder(it: Dict[str, Any]) -> str:
     return _pick_img(it) or _PLACEHOLDER_URI
 
 
+# ---------- Data fetching ----------
+
 def _get_items_for_section(
-    title: str, hours_limit: Optional[int] = None, query: str = "", max_items: int = 80
+    title: str,
+    hours_limit: Optional[int] = None,
+    query: str = "",
+    max_items: int = 80,
 ) -> List[Dict[str, Any]]:
-    """Haal items op voor een categorie (title)."""
     feeds = CATEGORY_FEEDS.get(title, [])
+
+    # collect_items kan bij jou (items, stats) teruggeven.
     res = collect_items(feeds, query=query, max_items=max_items)
-    # Sommige versies van common.collect_items geven (items, stats) terug.
     if isinstance(res, tuple) and len(res) >= 1:
         items = res[0]
     else:
         items = res
+
     items = _flatten(items)
 
-    # Optionele uren-filter: alleen toepassen voor 'Net binnen' (home/compact gebruikt vaak dezelfde 'hrs' voor alles)
-    if hours_limit and hours_limit > 0 and title.strip().lower() in ("net binnen", "net_binnen"):
-        items = [it for it in items if within_hours(it.get("dt"), hours_limit)]
+    # Uren-filter: alleen logisch voor "Net binnen"
+    if hours_limit and hours_limit > 0 and title.strip().lower() == "net binnen":
+        items = [it for it in items if within_hours(_get_dt(it), hours_limit)]
 
-    # Sorteer op datum (nieuwste eerst) als dt aanwezig is
-    def _sort_key(it: Dict[str, Any]):
-        return it.get("dt") or 0
-
-    items.sort(key=_sort_key, reverse=True)
+    # Sorteer robuust op datum (nieuwste eerst)
+    items.sort(key=lambda it: _dt_sort_key(_get_dt(it)), reverse=True)
     return items
 
 
 def _page_path_for_section(title: str) -> str:
-    """Zoek automatisch de juiste Streamlit page voor een section/categorie.
-
-    We scannen /pages/*.py en zoeken naar render_section("<title>", ...).
-    Retourneert pad zoals "pages/22_Regionaal.py".
-    """
+    """Zoek automatisch de juiste Streamlit page voor een section/categorie."""
     import glob
 
     title_norm = _safe_str(title)
-    candidates = glob.glob("pages/*.py")
-    for p in candidates:
+    for p in glob.glob("pages/*.py"):
         try:
             txt = open(p, "r", encoding="utf-8", errors="ignore").read()
         except Exception:
@@ -147,12 +197,16 @@ def _page_path_for_section(title: str) -> str:
     return ""
 
 
+# ---------- UI blocks ----------
+
 def _hero_card(it: Dict[str, Any], section_key: str):
-    """Hero: grote kaart met beeld + titel overlay. Klikbaar -> in-app artikel."""
     img = _img_or_placeholder(it)
-    title = _norm_title(it.get("title", ""))
-    meta = f"{host(it.get('link',''))} • {pretty_dt(it.get('dt'))}".strip(" •")
+    title = _get_title(it)
+    link = _get_link(it)
+    meta = f"{host(link)} • {pretty_dt(_get_dt(it))}".strip(" •")
     oid = item_id(it)
+
+    # HERO moet altijd titel/meta overlay hebben, zoals jij wil
     href = f"?section={section_key}&open={oid}"
 
     st.markdown(
@@ -194,11 +248,11 @@ def _hero_card(it: Dict[str, Any], section_key: str):
     )
 
 
-def _thumb_row(it: Dict[str, Any], section_key: str, idx: int):
-    """Thumbnail row: beeld links, titel + meta rechts. Hele rij is klikbaar (in-app)."""
+def _thumb_row(it: Dict[str, Any], section_key: str):
     img = _img_or_placeholder(it)
-    title = _norm_title(it.get("title", ""))
-    meta = f"{host(it.get('link',''))} • {pretty_dt(it.get('dt'))}".strip(" •")
+    title = _get_title(it)
+    link = _get_link(it)
+    meta = f"{host(link)} • {pretty_dt(_get_dt(it))}".strip(" •")
     oid = item_id(it)
     href = f"?section={section_key}&open={oid}"
 
@@ -231,11 +285,11 @@ def _thumb_row(it: Dict[str, Any], section_key: str, idx: int):
     )
 
 
-def _list_row(it: Dict[str, Any], section_key: str, idx: int):
-    """Row in 'Meer berichten' / load-more lijst: altijd thumbnail + titel + meta rechts."""
+def _list_row(it: Dict[str, Any], section_key: str):
     img = _img_or_placeholder(it)
-    title = _norm_title(it.get("title", ""))
-    meta = f"{host(it.get('link',''))} • {pretty_dt(it.get('dt'))}".strip(" •")
+    title = _get_title(it)
+    link = _get_link(it)
+    meta = f"{host(link)} • {pretty_dt(_get_dt(it))}".strip(" •")
     oid = item_id(it)
     href = f"?section={section_key}&open={oid}"
 
@@ -269,22 +323,22 @@ def _list_row(it: Dict[str, Any], section_key: str, idx: int):
 
 
 def _render_article(it: Dict[str, Any], section_key: str):
-    """In-app artikelweergave."""
-    title = _norm_title(it.get("title", ""))
-    link = _safe_str(it.get("link", ""))
+    title = _get_title(it)
+    link = _get_link(it)
     img = _pick_img(it)
 
     st.markdown(f"### {title}")
-
-    meta = f"{host(link)} • {pretty_dt(it.get('dt'))}".strip(" •")
+    meta = f"{host(link)} • {pretty_dt(_get_dt(it))}".strip(" •")
     if meta:
         st.caption(meta)
 
     if img:
-        # streamlit 1.52: image width param gebruikt 'width'
-        st.image(img, width="stretch")
+        try:
+            st.image(img, width="stretch")
+        except TypeError:
+            st.image(img, use_container_width=True)
 
-    body = it.get("summary") or it.get("content") or ""
+    body = it.get("summary") or it.get("content") or it.get("description") or ""
     if body:
         st.markdown(body, unsafe_allow_html=True)
     else:
@@ -294,7 +348,6 @@ def _render_article(it: Dict[str, Any], section_key: str):
         try:
             st.link_button("Bekijk origineel", link, width="stretch")
         except TypeError:
-            # oudere streamlit
             st.link_button("Bekijk origineel", link)
 
 
@@ -306,14 +359,9 @@ def render_section(
     thumbs_n: int = 4,
     view: str = "full",
 ):
-    """Render een categorieblok.
-
-    view="home"/"compact" -> Header + 1 hero + N thumbs + knop "Meer <categorie>"
-    view="full"           -> Volledige categoriepagina met 'load more' lijst (ook thumbs!)
-    """
     section_key = re.sub(r"[^a-z0-9]+", "_", title.lower()).strip("_") or "section"
 
-    # --- Query params: open item in-app ---
+    # Query params: open item in-app
     try:
         qp = st.query_params
     except Exception:
@@ -328,7 +376,7 @@ def render_section(
 
     items = _get_items_for_section(title, hours_limit=hours_limit, query=query, max_items=max_items)
 
-    # Als er een open=<id> is voor deze sectie: toon artikel view
+    # Als er open=<id> is voor deze sectie: toon artikel view
     if qp_open and (qp_section == section_key or qp_section == title):
         hit = None
         for it in items:
@@ -345,7 +393,7 @@ def render_section(
             _render_article(hit, section_key)
             return
 
-    # Header voor ieder blok
+    # Header (home wil dit expliciet)
     st.markdown(f"## {title}")
 
     if not items:
@@ -358,10 +406,10 @@ def render_section(
     _hero_card(hero, section_key)
 
     n = max(0, int(thumbs_n or 0))
-    for i, it in enumerate(rest[:n]):
-        _thumb_row(it, section_key, i)
+    for it in rest[:n]:
+        _thumb_row(it, section_key)
 
-    # Home/compact view: eindigt hier + knop naar categoriepagina
+    # Home/compact: knop "Meer <categorie>" en klaar
     if view in ("home", "compact"):
         label = f"Meer {title}"
         page_path = _page_path_for_section(title)
@@ -376,15 +424,14 @@ def render_section(
             st.caption(label)
         return
 
-    # Volledige view: lijst met meer berichten + "Laad meer" (alles met thumbnails)
+    # Full view: lijst + laad meer
     st.markdown("### Meer berichten")
 
     shown = int(st.session_state.get(f"kbm_shown_{section_key}", max(12, n)))
-
     start = 1 + n
     more_items = items[start : start + shown]
-    for i, it in enumerate(more_items):
-        _list_row(it, section_key, i)
+    for it in more_items:
+        _list_row(it, section_key)
 
     remaining = max(0, len(items) - (start + shown))
     if remaining > 0:
