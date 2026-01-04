@@ -74,61 +74,74 @@ def _hero_card(it: Dict[str, Any], section_key: str):
     img = _pick_img(it)
     title = _norm_title(it.get("title",""))
     meta = f"{host(it.get('link',''))} • {pretty_dt(it.get('dt'))}".strip(" •")
-    # Hero met tekst-overlay + schaduw
+    oid = item_id(it)
+
+    # Klik op hero (titel/beeld) opent in-app via query params
+    href = f"?section={section_key}&open={oid}"
+
     if img:
         st.markdown(
             f'''
             <div style="position:relative;border-radius:18px;overflow:hidden;margin:12px 0;">
-              <img src="{img}" style="width:100%;height:230px;object-fit:cover;display:block;">
-              <div style="position:absolute;left:0;right:0;bottom:0;padding:16px 16px 14px 16px;
-                          background:linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(0,0,0,.55) 55%, rgba(0,0,0,.70) 100%);">
-                <div class="kbm-title" style="color:#fff;font-size:1.35rem;line-height:1.2;text-shadow:0 2px 14px rgba(0,0,0,.55);">{title}</div>
-                <div class="kbm-meta" style="color:#fff;text-shadow:0 2px 12px rgba(0,0,0,.55);">{meta}</div>
-              </div>
+              <a href="{href}" style="text-decoration:none;display:block;">
+                <img src="{img}" style="width:100%;height:230px;object-fit:cover;display:block;">
+                <div style="position:absolute;left:0;right:0;bottom:0;padding:16px 16px 14px 16px;
+                            background:linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(0,0,0,.55) 55%, rgba(0,0,0,.70) 100%);">
+                  <div class="kbm-title" style="color:#fff;font-size:22px;font-weight:800;line-height:1.2;text-shadow:0 2px 14px rgba(0,0,0,.55);">{title}</div>
+                  <div class="kbm-meta" style="color:#fff;text-shadow:0 2px 12px rgba(0,0,0,.55);">{meta}</div>
+                </div>
+              </a>
             </div>
             ''',
-            unsafe_allow_html=True
+            unsafe_allow_html=True,
         )
     else:
-        st.markdown(f"### {title}")
+        # fallback zonder image (nog steeds klikbaar)
+        st.markdown(f"### [{title}]({href})")
         st.caption(meta)
-
-    cols = st.columns([1,1,1])
-    with cols[0]:
-        st.link_button("Open origineel", it.get("link","") or "#", width="stretch")
-    with cols[1]:
-        if st.button("Lees in app", key=f"open_{section_key}_{item_id(it)}_hero", width="stretch"):
-            st.session_state["kbm_open_item"] = it
-            st.session_state["kbm_open_section"] = section_key
-            st.experimental_rerun()
-    with cols[2]:
-        if st.button("⭐ Bewaar", key=f"bm_{section_key}_{item_id(it)}_hero", width="stretch"):
-            st.session_state.setdefault("bookmarks", [])
-            st.session_state["bookmarks"].insert(0, it)
 
 
 def _thumb_row(it: Dict[str, Any], section_key: str, idx: int):
-    """Thumbs: thumbnail links, titel ernaast. Titel opent artikel in-app."""
     img = _pick_img(it)
-    title = _norm_title(it.get("title", ""))
+    title = _norm_title(it.get("title",""))
     meta = f"{host(it.get('link',''))} • {pretty_dt(it.get('dt'))}".strip(" •")
+    oid = item_id(it)
+    href = f"?section={section_key}&open={oid}"
 
-    c_img, c_txt = st.columns([1, 3.2], vertical_alignment="center", gap="small")
-    with c_img:
+    col_img, col_txt = st.columns([1, 3.2], gap="small", vertical_alignment="center")
+
+    with col_img:
         if img:
-            st.image(img, width=86)
+            st.markdown(
+                f'''
+                <a href="{href}" style="display:block;">
+                  <img src="{img}" style="width:82px;height:82px;object-fit:cover;border-radius:12px;display:block;">
+                </a>
+                ''',
+                unsafe_allow_html=True,
+            )
         else:
-            st.markdown('<div style="width:86px;height:86px;border-radius:14px;background:#e9edf2;"></div>', unsafe_allow_html=True)
+            st.markdown(
+                f'''
+                <a href="{href}" style="display:block;">
+                  <div style="width:82px;height:82px;border-radius:12px;background:#222;"></div>
+                </a>
+                ''',
+                unsafe_allow_html=True,
+            )
 
-    with c_txt:
-        if st.button(title or "Open artikel", key=f"open_{section_key}_{item_id(it)}_thumbrow_{idx}"):
-            st.session_state["kbm_open_item"] = it
-            st.session_state["kbm_open_section"] = section_key
-            st.experimental_rerun()
-        if meta:
-            st.caption(meta)
+    with col_txt:
+        # Titel als "link" (geen zichtbare knoppen)
+        st.markdown(
+            f'''
+            <div style="line-height:1.25;">
+              <a href="{href}" style="text-decoration:none;color:inherit;font-weight:750;">{title}</a>
+              <div class="kbm-meta" style="opacity:.72;margin-top:3px;">{meta}</div>
+            </div>
+            ''',
+            unsafe_allow_html=True,
+        )
 
-    st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
 
 def _thumb_only(it: Dict[str, Any], section_key: str, idx: int):
     """Compact thumbnail: beeld links (vierkant), titel eronder. Past bij jouw mockup."""
