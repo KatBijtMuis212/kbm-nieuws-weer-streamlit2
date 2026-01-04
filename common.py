@@ -534,9 +534,60 @@ def fetch_article_media(url: str) -> Dict[str, str]:
         if not r.ok:
             return media
         soup = BeautifulSoup(r.text or "", "lxml")
+
+        # OG/Twitter
         media["image"] = _meta(soup, "og:image") or _meta(soup, "twitter:image")
-        media["video"] = _meta(soup, "og:video") or _meta(soup, "og:video:url") or _meta(soup, "twitter:player")
+        media["video"] = (
+            _meta(soup, "og:video")
+            or _meta(soup, "og:video:url")
+            or _meta(soup, "twitter:player")
+        )
         media["audio"] = _meta(soup, "og:audio") or _meta(soup, "og:audio:url")
+        media["poster"] = _meta(soup, "og:image") or _meta(soup, "twitter:image")
+
+        # --- JSON-LD (veel sites, incl. NU.nl) ---
+        # zoekt naar VideoObject contentUrl/embedUrl
+        for s in soup.find_all("script", attrs={"type": "application/ld+json"}):
+            try:
+                txt = (s.string or "").strip()
+                if not txt:
+                    continue
+                import json
+                data = json.loads(txt)
+
+                def walk(obj):
+                    if isinstance(obj, dict):
+                        # VideoObject
+                        t = obj.get("@type")
+                        if isinstance(t, list):
+                            is_video = "VideoObject" in t
+                        else:
+                            is_video = (t == "VideoObject")
+
+                        if is_video:
+                            cu = obj.get("contentUrl") or ""
+                            eu = obj.get("embedUrl") or ""
+                            th = obj.get("thumbnailUrl") or ""
+                            if not media["video"] and cu:
+                                media["video"] = cu
+                            if (not media["video"]) and eu:
+                                media["video"] = eu
+                            if not media["poster"]:
+                                if isinstance(th, list) and th:
+                                    media["poster"] = th[0]
+                                elif isinstance(th, str):
+                                    media["poster"] = th
+
+                        for v in obj.values():
+                            walk(v)
+                    elif isinstance(obj, list):
+                        for v in obj:
+                            walk(v)
+
+                walk(data)
+            except Exception:
+                continue
+
     except Exception:
         return media
     return media
