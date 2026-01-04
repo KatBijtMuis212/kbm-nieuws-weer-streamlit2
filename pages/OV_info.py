@@ -1,135 +1,134 @@
-import streamlit as st
-from streamlit_javascript import st_javascript
-from common import (
-    vt_find_stops_by_name,
-    vt_find_stops_by_name_town,
-    vt_find_stops_by_geo,
-    vt_departures_by_town_stop,
-)
 
-st.set_page_config(page_title="OV info", page_icon="🚌", layout="wide")
-st.markdown("# 🚌 OV info (live)")
+import streamlit as st
+from datetime import datetime
+from streamlit_js_eval import streamlit_js_eval
+
+from ov_api import search_stops_smart, nearby_stops, departures_by_stopcode
+
+st.set_page_config(page_title="OV Info", page_icon="🚌", layout="wide")
+st.markdown("# 🚌 OV Info")
+
+st.caption("Zoek een halte op naam (zoals in OV Info), of gebruik live locatie om haltes in de buurt te tonen.")
 
 tab1, tab2 = st.tabs(["🔎 Zoeken", "📍 Live locatie"])
 
-def render_departures(town: str, stop: str):
-    st.caption(f"Halte: **{stop}** — Plaats: **{town}**")
+def _fmt_dt(s: str) -> str:
+    # API returns ISO 8601 strings
     try:
-        data = vt_departures_by_town_stop(town, stop)
-    except Exception as e:
-        st.error(f"Vertrektijd.info fout: {e}")
-        return
-st.warning("Geen locatie. Tip: probeer Chrome of geef locatie-permissie.")
-fallback_town = st.text_input("Fallback: plaats", placeholder="bijv. Huizen")
-fallback_stop = st.text_input("Fallback: halte", placeholder="bijv. Busstation")
-if st.button("Toon vertrektijden (fallback)", use_container_width=True):
-    render_departures(fallback_town, fallback_stop)
+        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+        return dt.astimezone().strftime("%H:%M")
+    except Exception:
+        return s
 
-    # data structuur verschilt soms; probeer slim te lezen
-    obj = data.get("obj") if isinstance(data, dict) else None
-    if not obj:
-        st.info("Geen vertrektijden gevonden.")
-        return
-
-    # meestal: obj is lijst met vervoer-types (BTMF/NS/etc)
+def _departures_table(dep_json: dict):
+    btmf = dep_json.get("BTMF") or []
+    train = dep_json.get("TRAIN") or []
     rows = []
-    for group in obj if isinstance(obj, list) else [obj]:
-        deps = group.get("Departures") or []
-        for d in deps:
+    # BTMF
+    for block in btmf:
+        for d in (block.get("Departures") or []):
             rows.append({
-                "Vertrek": d.get("ExpectedDeparture") or d.get("PlannedDeparture") or "",
-                "Type": d.get("TransportType") or "",
-                "Lijn": d.get("LineNumber") or "",
+                "Tijd": _fmt_dt(d.get("ExpectedDeparture") or d.get("PlannedDeparture") or ""),
+                "Lijn": d.get("LineNumber") or d.get("LineName") or "",
                 "Richting": d.get("Destination") or "",
-                "Vervoerder": d.get("Agency") or "",
-                "Status": d.get("DepartureStatus") or "",
+                "Type": d.get("TransportType") or "",
+                "Status": d.get("VehicleStatus") or "",
+                "Perron": d.get("Platform") or "",
             })
-
+    # TRAIN (simpler view)
+    for block in train:
+        for d in (block.get("Departures") or []):
+            rows.append({
+                "Tijd": _fmt_dt(d.get("ExpectedDeparture") or d.get("PlannedDeparture") or ""),
+                "Lijn": d.get("LineNumber") or d.get("LineName") or "",
+                "Richting": d.get("Destination") or "",
+                "Type": "TRAIN",
+                "Status": d.get("VehicleStatus") or "",
+                "Perron": d.get("Platform") or "",
+            })
     if not rows:
-        st.info("Geen vertrektijden gevonden.")
+        st.info("Geen vertrektijden gevonden (nu).")
         return
-
     st.dataframe(rows, use_container_width=True, hide_index=True)
 
+def _stop_label(stop: dict) -> str:
+    name = stop.get("ScheduleName") or stop.get("StopName") or "Onbekende halte"
+    town = stop.get("Town") or ""
+    code = stop.get("StopCode") or ""
+    return f"{name} ({code})" if not town else f"{name} — {town} ({code})"
+
 with tab1:
-    colA, colB = st.columns([0.6, 0.4], gap="large")
+    q = st.text_input("Zoek halte", placeholder="bijv. Huizen Zuiderzee, Amsterdam Centraal, Gouda Station…", key="ov_q").strip()
+    colA, colB = st.columns([0.75, 0.25], gap="small")
     with colA:
-        q = st.text_input("Halte (naam)", placeholder="bijv. Busstation, Station, Centrum…")
+        go = st.button("Zoek", type="primary", use_container_width=True)
     with colB:
-        town = st.text_input("Plaats (optioneel, helpt enorm)", placeholder="bijv. Huizen")
+        debug = st.toggle("Debug tonen", value=False)
 
-    debug = st.toggle("Debug tonen", value=True)
-
-    if st.button("Zoek haltes", use_container_width=True):
-        if not q.strip():
-            st.warning("Vul eerst een halte-naam in.")
-            st.stop()
-
-        st.info("Zoeken… even geduld (max ~12 sec).")
-
+    if go and q:
         try:
-            if town.strip():
-                stops = vt_find_stops_by_name_town(q, town)
-            else:
-                stops = vt_find_stops_by_name(q)
-
-            if debug:
-                st.write("Aantal resultaten:", len(stops))
-                if len(stops) > 0:
-                    st.write("Voorbeeld record:", stops[0])
-
+            with st.spinner("Zoeken… even geduld (max ~12 sec)."):
+                res = search_stops_smart(q)
+            st.session_state.ov_last_results = res
         except Exception as e:
-            st.error(f"Zoeken faalde: {type(e).__name__}: {e}")
-            st.stop()
+            st.session_state.ov_last_results = []
+            st.error(f"Zoeken faalde: {e}")
 
-        if not stops:
-            st.warning("Geen haltes gevonden. Probeer andere spelling of vul plaats in.")
-        else:
-            opts = []
-            for s in stops[:25]:
-                stopname = s.get("StopName") or s.get("ScheduleName") or "Onbekend"
-                stown = s.get("Town") or town or "?"
-                opts.append((stown, stopname))
+    res = st.session_state.get("ov_last_results", [])
+    if res:
+        st.caption(f"Aantal resultaten: {len(res)}")
+        if debug:
+            st.markdown("**Voorbeeld record:**")
+            st.json(res[0])
+        options = { _stop_label(s): s for s in res }
+        choice = st.selectbox("Kies halte", list(options.keys()), key="ov_pick")
+        if st.button("Toon vertrektijden", use_container_width=True, key="ov_show_depart"):
+            st.session_state.ov_selected_stop = options[choice]
 
-            choice = st.selectbox("Kies halte", opts, format_func=lambda x: f"{x[1]} — {x[0]}")
-            if st.button("Toon vertrektijden", use_container_width=True):
-                render_departures(choice[0], choice[1])
+    sel = st.session_state.get("ov_selected_stop")
+    if sel:
+        st.markdown("## Vertrektijden")
+        st.caption(_stop_label(sel))
+        try:
+            with st.spinner("Vertrektijden ophalen…"):
+                dep = departures_by_stopcode(sel.get("StopCode"))
+            _departures_table(dep)
+        except Exception as e:
+            st.error(f"Vertrektijd.info fout: {e}")
 
 with tab2:
-    st.info("Klik op **Vraag locatie** en geef toestemming in je browser.")
-    if st.button("📍 Vraag locatie", use_container_width=True):
-        coords = st_javascript("""
-            await new Promise((resolve) => {
-              if (!navigator.geolocation) { resolve(null); return; }
-              navigator.geolocation.getCurrentPosition(
-                (pos) => resolve({lat: pos.coords.latitude, lon: pos.coords.longitude}),
-                (err) => resolve(null),
-                {enableHighAccuracy:true, timeout:10000, maximumAge:0}
-              );
-            });
-        """)
+    st.caption("Tip: werkt alleen als je browser locatie-permissie aan staat. Bij Streamlit Cloud blijft dit soms streng; opnieuw toestaan helpt.")
+    if st.button("📍 Pak live locatie", type="primary", use_container_width=True, key="ov_geo_btn"):
+        # streamlit_js_eval returns dict like {"coords":{"latitude":..,"longitude":..},...} or None
+        loc = streamlit_js_eval(js_expressions="navigator.geolocation.getCurrentPosition((p)=>p, (e)=>e)", want_output=True, key="ov_geo")
+        st.session_state.ov_live_loc = loc
 
-        if not coords or "lat" not in coords:
-            st.error("Geen locatie gekregen. Controleer browser-permissies.")
-        else:
-            lat, lon = float(coords["lat"]), float(coords["lon"])
-            st.success(f"Locatie: {lat:.5f}, {lon:.5f}")
-
-            dist = st.slider("Zoekafstand (km)", 0.2, 5.0, 1.0, 0.1)
-            try:
-                near = vt_find_stops_by_geo(lat, lon, distance_km=dist)
-            except Exception as e:
-                st.error(f"Vertrektijd.info fout: {e}")
-                near = []
-
-            if not near:
-                st.warning("Geen haltes in de buurt gevonden.")
+    loc = st.session_state.get("ov_live_loc")
+    if not loc or (isinstance(loc, dict) and loc.get("code")):
+        st.info("Geen locatie gekregen. Controleer browser-permissies.")
+    else:
+        try:
+            coords = loc.get("coords", {}) if isinstance(loc, dict) else {}
+            lat = coords.get("latitude")
+            lon = coords.get("longitude")
+            if lat is None or lon is None:
+                st.info("Geen locatie gekregen. Controleer browser-permissies.")
             else:
-                opts = []
-                for s in near[:25]:
-                    stopname = s.get("StopName") or s.get("ScheduleName") or "Onbekend"
-                    stown = s.get("Town") or "?"
-                    opts.append((stown, stopname))
-                choice = st.selectbox("Dichtbijzijnde haltes", opts, format_func=lambda x: f"{x[1]} — {x[0]}")
-                if st.button("Toon vertrektijden (live)", use_container_width=True):
-                    render_departures(choice[0], choice[1])
+                st.success(f"Locatie: {lat:.5f}, {lon:.5f}")
+                dist = st.slider("Zoekradius (meter)", 200, 2000, 700, 50, key="ov_geo_dist")
+                with st.spinner("Haltes in de buurt zoeken…"):
+                    stops = nearby_stops(float(lat), float(lon), int(dist))
+                if not stops:
+                    st.warning("Geen haltes gevonden in deze radius.")
+                else:
+                    # Sort by a best-effort distance if provided
+                    def _dist(s):
+                        return float(s.get("Distance", 9e9)) if s.get("Distance") is not None else 9e9
+                    stops_sorted = sorted(stops, key=_dist)
+                    options = { _stop_label(s): s for s in stops_sorted[:25] }
+                    choice = st.selectbox("Dichtbijzijnde haltes", list(options.keys()), key="ov_geo_pick")
+                    if st.button("Toon vertrektijden (dichtbij)", use_container_width=True, key="ov_geo_show"):
+                        st.session_state.ov_selected_stop = options[choice]
+                        st.rerun()
+        except Exception as e:
+            st.error(f"Live locatie fout: {e}")
