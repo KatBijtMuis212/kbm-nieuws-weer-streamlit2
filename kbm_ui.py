@@ -106,35 +106,29 @@ def _hero_card(it: Dict[str, Any], section_key: str):
             st.session_state.setdefault("bookmarks", [])
             st.session_state["bookmarks"].insert(0, it)
 
+
 def _thumb_row(it: Dict[str, Any], section_key: str, idx: int):
+    """Thumbs: thumbnail links, titel ernaast. Titel opent artikel in-app."""
     img = _pick_img(it)
-    title = _norm_title(it.get("title",""))
+    title = _norm_title(it.get("title", ""))
     meta = f"{host(it.get('link',''))} • {pretty_dt(it.get('dt'))}".strip(" •")
 
-    left, right = st.columns([1, 4], vertical_alignment="center")
-    with left:
+    c_img, c_txt = st.columns([1, 3.2], vertical_alignment="center", gap="small")
+    with c_img:
         if img:
             st.image(img, width=86)
         else:
-            st.markdown('<div style="width:86px;height:64px;border-radius:12px;background:#e9edf2;"></div>', unsafe_allow_html=True)
-    with right:
-        st.markdown(f'<div class="kbm-title" style="font-size:1.05rem;line-height:1.25;">{title}</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="kbm-meta">{meta}</div>', unsafe_allow_html=True)
+            st.markdown('<div style="width:86px;height:86px;border-radius:14px;background:#e9edf2;"></div>', unsafe_allow_html=True)
 
-    btns = st.columns([1,1,1])
-    with btns[0]:
-        st.link_button("Open origineel", it.get("link","") or "#", width="stretch")
-    with btns[1]:
-        if st.button("Lees in app", key=f"open_{section_key}_{item_id(it)}_{idx}", width="stretch"):
+    with c_txt:
+        if st.button(title or "Open artikel", key=f"open_{section_key}_{item_id(it)}_thumbrow_{idx}"):
             st.session_state["kbm_open_item"] = it
             st.session_state["kbm_open_section"] = section_key
             st.experimental_rerun()
-    with btns[2]:
-        if st.button("⭐ Bewaar", key=f"bm_{section_key}_{item_id(it)}_{idx}", width="stretch"):
-            st.session_state.setdefault("bookmarks", [])
-            st.session_state["bookmarks"].insert(0, it)
+        if meta:
+            st.caption(meta)
 
-    st.divider()
+    st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
 
 def _thumb_only(it: Dict[str, Any], section_key: str, idx: int):
     """Compact thumbnail: beeld links (vierkant), titel eronder. Past bij jouw mockup."""
@@ -226,8 +220,7 @@ def render_section(title: str, hours_limit: int = 24, query: str | None = None, 
 
     with left_col:
         for idx, it in enumerate(thumbs, start=1):
-            _thumb_only(it, section_key, idx)
-            st.write("")
+            _thumb_row(it, section_key, idx)
 
     with right_col:
         st.markdown("### Meer berichten")
