@@ -8,4 +8,4 @@ openai>=1.0.0
 streamlit-autorefresh>=1.0.1
 streamlit-javascript>=0.1.5
 streamlit-js-eval>=0.1.7
-streamlit-keyup
+streamlit-keyup==0.2.4
