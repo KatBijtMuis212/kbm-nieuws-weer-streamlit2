@@ -332,17 +332,39 @@ def _fetch_article_text(url: str) -> str:
     """
     if not url:
         return ""
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "nl-NL,nl;q=0.9,en;q=0.6",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
+        "DNT": "1",
+        "Upgrade-Insecure-Requests": "1",
+        "Referer": url,
+    }
+
+    html = ""
+    # 1) Eerste poging: direct
     try:
-        r = requests.get(
-            url,
-            timeout=12,
-            headers={
-                "User-Agent": "KbMNieuws/1.0 (Streamlit)",
-                "Accept": "text/html,application/xhtml+xml",
-            },
-        )
-        r.raise_for_status()
+        r = requests.get(url, timeout=15, headers=headers)
+        if r.status_code == 200:
+            html = r.text or ""
+        else:
+            html = ""
     except Exception:
+        html = ""
+
+    # 2) Fallback: r.jina.ai reader proxy (handig bij consent/waf/JS-muren)
+    if (not html) or ("consent" in html.lower()) or ("cookie" in html.lower() and "accept" in html.lower()) or ("enable javascript" in html.lower()):
+        try:
+            proxy_url = "https://r.jina.ai/" + url
+            rp = requests.get(proxy_url, timeout=20, headers=headers)
+            if rp.status_code == 200:
+                html = rp.text or ""
+        except Exception:
+            pass
+
+    if not html.strip():
         return ""
 
     html = r.text or ""
@@ -350,6 +372,23 @@ def _fetch_article_text(url: str) -> str:
         return ""
 
     soup = BeautifulSoup(html, "html.parser")
+
+    # Veel nieuwssites (o.a. NU.nl): probeer JSON-LD (articleBody) als betrouwbare bron
+    try:
+        import json
+        for s in soup.find_all("script", attrs={"type": "application/ld+json"}):
+            txt = (s.string or "").strip()
+            if not txt:
+                continue
+            data = json.loads(txt)
+            candidates = data if isinstance(data, list) else [data]
+            for obj in candidates:
+                if isinstance(obj, dict) and obj.get("@type") in ("NewsArticle", "Article", "ReportageNewsArticle"):
+                    body = obj.get("articleBody") or obj.get("description") or ""
+                    if isinstance(body, str) and len(body.strip()) > 200:
+                        return body.strip()
+    except Exception:
+        pass
 
     # weg met rommel
     for tag in soup(["script", "style", "noscript", "svg", "iframe"]):
