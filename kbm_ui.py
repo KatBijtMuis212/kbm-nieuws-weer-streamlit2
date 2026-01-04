@@ -1,35 +1,32 @@
 import html
 import streamlit as st
+
 from common import CATEGORY_FEEDS, collect_items, within_hours, host, item_id, pretty_dt
 
 
-def article_url(src_url: str) -> str:
-    return f"/Artikel?url={src_url}"
-
-
-def _render_rss_html(s: str) -> None:
-    """Render RSS summary as HTML inside Streamlit (best-effort).
-    Many feeds include HTML tags; we unescape entities first.
-    """
-    if not s:
-        return
-    s = html.unescape(s)
-    st.markdown(s, unsafe_allow_html=True)
+def _matches_query(it: dict, query: str | None) -> bool:
+    if not query:
+        return True
+    q = query.strip().lower()
+    hay = " ".join([
+        str(it.get("title") or ""),
+        str(it.get("summary") or ""),
+        str(it.get("description") or ""),
+        str(it.get("link") or ""),
+    ]).lower()
+    return q in hay
 
 
 def _bookmark(it: dict) -> None:
-    """Add item to session bookmark list (id-based)."""
     if "bookmarks" not in st.session_state:
         st.session_state.bookmarks = []
     bid = item_id(it)
     ids = {item_id(x) for x in st.session_state.bookmarks}
-    if bid in ids:
-        return
-    st.session_state.bookmarks.insert(0, it)
+    if bid not in ids:
+        st.session_state.bookmarks.insert(0, it)
 
 
-def render_item_preview(it: dict) -> None:
-    """Compact preview inside expander."""
+def _render_preview(it: dict) -> None:
     title = it.get("title") or "Zonder titel"
     link = it.get("link") or ""
     src = host(link)
@@ -47,7 +44,7 @@ def render_item_preview(it: dict) -> None:
 
     summary = it.get("summary") or it.get("description") or ""
     if summary:
-        _render_rss_html(summary)
+        st.markdown(html.unescape(summary), unsafe_allow_html=True)
 
     cols = st.columns([1, 1, 1], gap="small")
     with cols[0]:
@@ -55,7 +52,7 @@ def render_item_preview(it: dict) -> None:
             st.link_button("Open origineel", link, use_container_width=True)
     with cols[1]:
         if link:
-            st.link_button("Lees in app", article_url(link), use_container_width=True)
+            st.link_button("Lees in app", f"/Artikel?url={link}", use_container_width=True)
     with cols[2]:
         if st.button("⭐ Bewaar", key=f"bm_{item_id(it)}", use_container_width=True):
             _bookmark(it)
@@ -64,33 +61,32 @@ def render_item_preview(it: dict) -> None:
 
 def render_section(
     title: str,
+    hours_limit: int = 24,
+    query: str | None = None,
+    max_items: int = 60,
+    thumbs_n: int = 4,
     feeds: list[str] | None = None,
-    hours: int = 48,
-    limit: int = 25,
-    compact: bool = False,
-    show_images: bool = True,
 ) -> None:
-    """Render one news section from a set of feeds."""
     if feeds is None:
         feeds = CATEGORY_FEEDS.get(title, [])
+
+    items = collect_items(feeds)
+    items = [x for x in items if within_hours(x.get("dt"), hours_limit)]
+    items = [x for x in items if _matches_query(x, query)]
+    items = items[: max(0, int(max_items))]
 
     st.markdown('<div class="kbm-card">', unsafe_allow_html=True)
     st.markdown(f"### {title}")
 
-    items = collect_items(feeds)
-    items = [x for x in items if within_hours(x.get("dt"), hours)]
-    items = items[: max(0, int(limit))]
-
     if not items:
-        st.info("Geen berichten gevonden (of te oud).")
+        st.info("Geen berichten gevonden.")
         st.markdown("</div>", unsafe_allow_html=True)
         return
 
-    top = items[: min(6, len(items))]
-    more = items[6:] if len(items) > 6 else []
+    top = items[: min(int(thumbs_n), len(items))]
+    rest = items[min(int(thumbs_n), len(items)) :]
 
     st.markdown('<div class="kbm-grid">', unsafe_allow_html=True)
-
     for it in top:
         link = it.get("link") or ""
         img = it.get("image") or ""
@@ -98,45 +94,8 @@ def render_section(
         dt = pretty_dt(it.get("dt"))
         headline = it.get("title") or "Zonder titel"
 
-        if compact:
-            st.markdown(
-                f"""
-<div class="kbm-item">
-  <div class="kbm-item-inner">
-    <div class="kbm-item-title"><a href="{article_url(link)}">{html.escape(headline)}</a></div>
-    <div class="kbm-item-meta">{html.escape(src)} • {html.escape(dt)}</div>
-  </div>
-</div>
-""",
-                unsafe_allow_html=True,
-            )
-        else:
-            thumb = ""
-            if show_images and img:
-                thumb = f"""
-<div class="kbm-thumb" style="background-image:url('{html.escape(img)}')"></div>
-"""
-            st.markdown(
-                f"""
-<div class="kbm-item kbm-item--card">
-  {thumb}
-  <div class="kbm-item-inner">
-    <div class="kbm-item-title"><a href="{article_url(link)}">{html.escape(headline)}</a></div>
-    <div class="kbm-item-meta">{html.escape(src)} • {html.escape(dt)}</div>
-  </div>
-</div>
-""",
-                unsafe_allow_html=True,
-            )
-            with st.expander("Lees preview", expanded=False):
-                render_item_preview(it)
+        thumb = ""
+        if img:
+            thumb = f"""<div class="kbm-thumb" style="background-image:url('{html.escape(img)}')"></div>"""
 
-    st.markdown("</div>", unsafe_allow_html=True)
-
-    if more:
-        with st.expander("Meer berichten", expanded=False):
-            for it in more:
-                st.markdown(f"- [{it.get('title','Zonder titel')}]({article_url(it.get('link',''))})")
-                st.caption(f"{host(it.get('link',''))} • {pretty_dt(it.get('dt'))}")
-
-    st.markdown("</div>", unsafe_allow_html=True)
+        st.markdown(
