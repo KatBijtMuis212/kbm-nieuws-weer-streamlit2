@@ -21,7 +21,33 @@ st.markdown("# 🗞️ KbM Nieuws")
 
 # Render progressively with spinners so you SEE progress instead of endless white loader
 with st.spinner("Net binnen laden…"):
-    render_section("Net binnen", hours_limit=hrs, query=query, max_items=80, thumbs_n=6, view="home")
+    
+# Als er een artikel is aangeklikt (via ?section=...&open=...), toon alleen die sectie (artikelview) en stop.
+try:
+    _qp = st.query_params
+    _qp_section = (_qp.get("section") or "").strip().lower()
+    _qp_open = (_qp.get("open") or "").strip()
+except Exception:
+    _qp_section, _qp_open = "", ""
+
+def _slug(s: str) -> str:
+    import re as _re
+    return _re.sub(r"[^a-z0-9]+", "_", (s or "").lower()).strip("_")
+
+if _qp_open and _qp_section:
+    # bekende home-secties + extra
+    _titles = ["Net binnen","Binnenland","Buitenland","Show","Lokaal","Sport","Tech","Opmerkelijk","Economie"]
+    hit_title = None
+    for t in _titles:
+        if _slug(t) == _qp_section:
+            hit_title = t
+            break
+    if hit_title:
+        render_section(hit_title, hours_limit=hrs, query=query, max_items=200, thumbs_n=6, view="full")
+        st.stop()
+
+
+render_section("Net binnen", hours_limit=hrs, query=query, max_items=80, thumbs_n=6, view="home")
 
 with st.spinner("Binnenland laden…"):
     render_section("Binnenland", hours_limit=hrs, query=query, max_items=60, thumbs_n=4, view="home")
