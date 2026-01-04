@@ -242,4 +242,192 @@ def _search_live(q: str) -> list[dict]:
                 res.append(item)
             elif isinstance(item, str) and item.strip():
                 res.append({"StopName": item.strip()})
-    elif isinstance(ra
+    elif isinstance(raw, str) and raw.strip():
+        res = [{"StopName": raw.strip()}]
+    return res
+
+
+# ----------------------------
+# TAB 1 — Zoeken (live typing)
+# ----------------------------
+with tab1:
+    # Live typing via st_keyup
+    q_raw = ""
+    try:
+        from streamlit_keyup import st_keyup  # type: ignore
+
+        q_raw = st_keyup(
+            "Zoek halte",
+            placeholder="bijv. Utrecht Centraal, Huizen Zuiderzee, Gouda Station…",
+            key="ov_q_keyup",
+        ) or ""
+    except Exception:
+        q_raw = st.text_input(
+            "Zoek halte",
+            placeholder="Installeer streamlit-keyup voor live typen…",
+            key="ov_q",
+        ) or ""
+
+    q = q_raw.strip()
+
+    colA, colB, colC = st.columns([0.55, 0.25, 0.20], gap="small")
+    with colA:
+        auto = st.toggle("Live zoeken", value=True)
+    with colB:
+        auto_refresh = st.toggle("Auto-refresh vertrektijden", value=False)
+    with colC:
+        debug = st.toggle("Debug", value=False)
+
+    # throttle live searches
+    last_q = st.session_state.get("ov_last_q", "")
+    last_t = float(st.session_state.get("ov_last_t", 0.0))
+
+    if auto and q and q != last_q and (time.time() - last_t) > 0.25:
+        with st.spinner("Zoeken…"):
+            res = _search_live(q)
+        st.session_state["ov_last_results"] = res
+        st.session_state["ov_last_q"] = q
+        st.session_state["ov_last_t"] = time.time()
+
+    res = st.session_state.get("ov_last_results", []) or []
+    if res:
+        st.caption(f"Aantal resultaten: {len(res)}")
+
+        if debug:
+            st.json(res[0])
+
+        # labels -> item (uniques)
+        options = {}
+        counts = {}
+        for s in res:
+            label = _stop_label(s)
+            counts[label] = counts.get(label, 0) + 1
+            if counts[label] > 1:
+                label = f"{label}  #{counts[label]}"
+            options[label] = s
+
+        choice = st.selectbox("Kies halte", list(options.keys()), key="ov_pick")
+        st.session_state["ov_selected_stop"] = options.get(choice)
+
+    sel = st.session_state.get("ov_selected_stop")
+    if sel:
+        st.markdown("## Vertrektijden")
+        st.caption(_stop_label(sel))
+
+        # optioneel auto-refresh
+        if auto_refresh:
+            st.caption("⏱️ Auto-refresh staat aan (elke 20 sec).")
+            time.sleep(0.1)
+            st.rerun()
+
+        try:
+            with st.spinner("Vertrektijden ophalen…"):
+                stopcode = _get_stopcode(sel)
+
+                dep_rows = []
+                if stopcode:
+                    dep = departures_by_stopcode(stopcode)
+                    dep_rows = _departures_to_rows(dep) if isinstance(dep, dict) else []
+                else:
+                    # Fallback: probeer departures op town+stopnaam
+                    town, name = _get_town_and_name(sel)
+                    if town and name:
+                        raw_list = departures_by_nametown(town, name)
+                        # best-effort parse: maak simpele rows
+                        if isinstance(raw_list, list):
+                            for d in raw_list:
+                                if not isinstance(d, dict):
+                                    continue
+                                exp = d.get("ExpectedDeparture") or d.get("PlannedDeparture") or d.get("departure") or ""
+                                mins = _mins_until(exp) if exp else None
+                                dep_rows.append(
+                                    {
+                                        "time": _fmt_dt(exp),
+                                        "line": d.get("LineNumber") or d.get("line") or d.get("LineName") or "—",
+                                        "dest": d.get("Destination") or d.get("destination") or "—",
+                                        "mins": mins,
+                                        "plat": d.get("Platform") or d.get("platform") or "",
+                                        "typ": d.get("TransportType") or d.get("type") or "—",
+                                        "status": d.get("VehicleStatus") or "",
+                                        "raw": d,
+                                    }
+                                )
+                            dep_rows.sort(key=lambda r: (9999 if r["mins"] is None else r["mins"]))
+                    else:
+                        st.warning("Deze halte mist StopCode én (plaats/naam). Kies een andere optie uit de lijst.")
+
+            _render_board(dep_rows)
+
+        except Exception as e:
+            st.error(f"Vertrektijd.info fout: {e}")
+
+
+# ----------------------------
+# TAB 2 — Live locatie (Promise JS)
+# ----------------------------
+with tab2:
+    st.caption("Zorg dat je browser locatie-permissie aan staat. In Streamlit Cloud moet je soms 1x opnieuw toestaan.")
+
+    js_geo = """
+new Promise((resolve) => {
+  navigator.geolocation.getCurrentPosition(
+    (p) => resolve({coords:{latitude:p.coords.latitude, longitude:p.coords.longitude, accuracy:p.coords.accuracy}}),
+    (e) => resolve({error:true, code:e.code, message:e.message}),
+    {enableHighAccuracy:true, timeout:12000, maximumAge:0}
+  );
+})
+"""
+
+    if st.button("📍 Pak live locatie", type="primary", use_container_width=True, key="ov_geo_btn"):
+        loc = streamlit_js_eval(js_expressions=js_geo, want_output=True, key="ov_geo")
+        st.session_state["ov_live_loc"] = loc
+
+    loc = st.session_state.get("ov_live_loc")
+    if not loc or (isinstance(loc, dict) and loc.get("error")):
+        st.info("Geen locatie gekregen. Check permissies in je browser (slotje links van de URL).")
+        if isinstance(loc, dict) and loc.get("error"):
+            st.caption(f"Browser error: {loc.get('message')} (code {loc.get('code')})")
+        st.stop()
+
+    coords = loc.get("coords", {}) if isinstance(loc, dict) else {}
+    lat = coords.get("latitude")
+    lon = coords.get("longitude")
+    if lat is None or lon is None:
+        st.info("Geen locatie gekregen. Check permissies in je browser.")
+        st.stop()
+
+    st.success(f"Locatie: {float(lat):.5f}, {float(lon):.5f}  • acc ±{coords.get('accuracy','?')} m")
+
+    dist = st.slider("Zoekradius (meter)", 200, 2000, 700, 50, key="ov_geo_dist")
+
+    with st.spinner("Haltes in de buurt zoeken…"):
+        stops = nearby_stops(float(lat), float(lon), int(dist))
+
+    if not stops:
+        st.warning("Geen haltes gevonden in deze radius.")
+        st.stop()
+
+    # sort best-effort on Distance
+    def _dist(s):
+        try:
+            return float(_stop_obj(s).get("Distance", 9e9))
+        except Exception:
+            return 9e9
+
+    stops_sorted = sorted(stops, key=_dist)
+
+    options = {}
+    counts = {}
+    for s in stops_sorted[:40]:
+        label = _stop_label(s)
+        counts[label] = counts.get(label, 0) + 1
+        if counts[label] > 1:
+            label = f"{label}  #{counts[label]}"
+        options[label] = s
+
+    choice = st.selectbox("Dichtbijzijnde haltes", list(options.keys()), key="ov_geo_pick")
+    sel = options.get(choice)
+    st.session_state["ov_selected_stop"] = sel
+
+    if st.button("Toon vertrektijden", use_container_width=True, key="ov_geo_show"):
+        st.rerun()
