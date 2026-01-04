@@ -431,6 +431,83 @@ def openai_summarize(model: str, api_key: str, prompt: str) -> str:
             for c in o.get("content", []) or []:
                 if c.get("type") == "output_text" and c.get("text"):
                     out_parts.append(c["text"])
+                    # --- OV / Vertrektijd.info helpers ---
+from urllib.parse import quote
+import requests
+import streamlit as st
+
+VT_BASE = "https://api.vertrektijd.info"
+
+def _vt_key() -> str:
+    # werkt op Streamlit Cloud + lokaal
+    k = None
+    try:
+        k = st.secrets.get("VERTREKTIJD_API_KEY")
+    except Exception:
+        k = None
+    if not k:
+        k = (os.environ.get("VERTREKTIJD_API_KEY") if "os" in globals() else None) or ""
+    return k.strip()
+
+def _vt_headers() -> dict:
+    key = _vt_key()
+    return {
+        "X-Vertrektijd-Client-Api-Key": key,
+        "Accept": "application/json",
+        "User-Agent": "KbMNieuws/1.0 (Streamlit)"
+    }
+
+def vt_get(path: str, params: dict | None = None, timeout: int = 12) -> dict:
+    url = f"{VT_BASE}{path}"
+    r = requests.get(url, headers=_vt_headers(), params=params, timeout=timeout)
+    r.raise_for_status()
+    return r.json()
+
+def vt_find_stops_by_name(stop_name: str) -> list[dict]:
+    # fuzzy zoeken op halte
+    # Docs: Stop endpoint supports getStopByName :contentReference[oaicite:1]{index=1}
+    stop_name = stop_name.strip()
+    if not stop_name:
+        return []
+    data = vt_get("/stop/_name/" + quote(stop_name) + "/")
+    # API varieert soms: list direct of {"obj": [...]}
+    if isinstance(data, dict) and "obj" in data:
+        return data["obj"] or []
+    if isinstance(data, list):
+        return data
+    return []
+
+def vt_find_stops_by_name_town(stop_name: str, town: str) -> list[dict]:
+    # Docs: Stop endpoint supports getStopByNameTown :contentReference[oaicite:2]{index=2}
+    stop_name = stop_name.strip()
+    town = town.strip()
+    if not stop_name or not town:
+        return []
+    data = vt_get("/stop/_nametown/" + quote(town) + "/" + quote(stop_name) + "/")
+    if isinstance(data, dict) and "obj" in data:
+        return data["obj"] or []
+    if isinstance(data, list):
+        return data
+    return []
+
+def vt_find_stops_by_geo(lat: float, lon: float, distance_km: float = 1.0) -> list[dict]:
+    # In docs: Stop endpoint kan op locatie (lat/lng + distance) :contentReference[oaicite:3]{index=3}
+    params = {"latitude": lat, "longitude": lon, "distance": distance_km}
+    data = vt_get("/stop/_geo/", params=params)
+    if isinstance(data, dict) and "obj" in data:
+        return data["obj"] or []
+    if isinstance(data, list):
+        return data
+    return []
+
+def vt_departures_by_town_stop(town: str, stop: str) -> dict:
+    town = town.strip()
+    stop = stop.strip()
+    if not town or not stop:
+        return {}
+    # jij testte dit pad al; verschil is: header + encoding + timeout
+    return vt_get("/departures/_nametown/" + quote(town) + "/" + quote(stop) + "/")
+
         return "\n\n".join(out_parts).strip()
     except Exception:
         return ""
