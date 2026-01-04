@@ -30,13 +30,10 @@ def add_bookmark(it: dict):
 
 def render_item_preview(it: dict):
     cols = st.columns([0.62, 0.38], gap="small")
-
     with cols[0]:
         st.caption(f"{host(it.get('link',''))} • {pretty_dt(it.get('dt'))}")
-
     with cols[1]:
         b1, b2 = st.columns(2, gap="small")
-
         with b1:
             if st.button(
                 "⭐ Lees later",
@@ -45,13 +42,8 @@ def render_item_preview(it: dict):
             ):
                 add_bookmark(it)
                 st.toast("Toegevoegd aan lees later ⭐")
-
         with b2:
-            st.link_button(
-                "🔎 Open",
-                url=article_url(it.get("link", "")),
-                use_container_width=True,
-            )
+            st.link_button("🔎 Open", url=article_url(it.get("link", "")), use_container_width=True)
 
     if it.get("img"):
         st.image(it["img"], use_container_width=True)
@@ -59,6 +51,8 @@ def render_item_preview(it: dict):
     if it.get("rss_summary"):
         st.markdown("**Korte preview (RSS):**")
         _render_rss_html(it["rss_summary"])
+
+
 def render_section(cat_name: str, hours_limit: int | None, query: str | None, max_items: int = 40, thumbs_n: int = 4):
     feed_labels = CATEGORY_FEEDS.get(cat_name, [])
     items, _ = collect_items(feed_labels, query=query, max_per_feed=30)
