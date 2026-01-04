@@ -357,8 +357,9 @@ def render_section(
         page_path = _page_path_for_section(title)
         if page_path:
             try:
-                if st.button(label, key=_uniq_key(f"more_{section_key}"), width="stretch"):
-                    st.switch_page(page_path)
+    if st.button(label, key=_uniq_key(f"more_{section_key}"), width="stretch"):
+        st.switch_page(page_path)
+
             except TypeError:
                 # oudere Streamlit: geen width-arg
                 if st.button(label, key=_uniq_key(f"more_{section_key}")):
