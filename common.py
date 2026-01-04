@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import json
 import hashlib
 import re
 import time
@@ -210,19 +211,25 @@ FEEDS: Dict[str, str] = {
     "rtl_nieuws": "RTL_DIRECT_NEWS",
     "rtl_boulevard": "RTL_DIRECT_BOULEVARD",
     "rtl_binnenland": "RTL_DIRECT_BINNENLAND",
+    "rtl_buitenland": "RTL_DIRECT_BUITENLAND",
+    "rtl_economie": "RTL_DIRECT_ECONOMIE",
+    "rtl_sport": "RTL_DIRECT_SPORT",
+    "rtl_tech": "RTL_DIRECT_TECH",
+    "rtl_royalty": "RTL_DIRECT_ROYALTY",
 }
 
 CATEGORY_FEEDS: Dict[str, List[str]] = {
     "Net binnen": ["nos_binnenland", "nu_algemeen", "rtvmh", "west_algemeen", "nh_gooi", "rtl_nieuws"],
 
-    "Binnenland": ["nos_binnenland", "nu_algemeen", "ad_home", "vk_voorpagina", "trouw_voorpagina", "nd_binnenland", "rtl_nieuws"],
-    "Buitenland": ["nos_buitenland", "vk_achtergrond", "nd_buitenland", "nrc_main", "rtl_nieuws"],
+    "Binnenland": ["nos_binnenland", "nu_algemeen", "ad_home", "vk_voorpagina", "trouw_voorpagina", "nd_binnenland", "rtl_nieuws", "rtl_binnenland"],
+    "Buitenland": ["nos_buitenland", "vk_achtergrond", "nd_buitenland", "nrc_main", "rtl_nieuws", "rtl_buitenland"],
     "Show": ["nu_entertainment", "nu_achterklap", "ad_sterren", "ad_show", "ad_showbytes", "rtl_boulevard"],
+"Royalty": ["nos_koningshuis", "ad_royalty", "nu_achterklap", "rtl_royalty"],
     "Lokaal": ["rtvmh", "west_bodegraven", "west_gouda", "west_alphen"],
-    "Sport": ["nos_sport", "nos_f1", "nu_sport", "west_sport", "nrc_sport", "trouw_sport", "rtl_nieuws"],
-    "Tech": ["nos_tech", "nu_tech", "ict_pcmweb", "ict_computable"],
+    "Sport": ["nos_sport", "nos_f1", "nu_sport", "west_sport", "nrc_sport", "trouw_sport", "rtl_nieuws", "rtl_sport"],
+    "Tech": ["nos_tech", "nu_tech", "ict_pcmweb", "ict_computable", "rtl_tech"],
     "Opmerkelijk": ["nos_opmerkelijk", "nu_opmerkelijk", "nu_goed", "ad_bizar", "trouw_cartoons"],
-    "Economie": ["nos_economie", "nu_economie", "ad_geld", "west_economie", "vk_economie", "nrc_economie", "trouw_duurzaamheid", "nd_economie", "rtl_nieuws"],
+    "Economie": ["nos_economie", "nu_economie", "ad_geld", "west_economie", "vk_economie", "nrc_economie", "trouw_duurzaamheid", "nd_economie", "rtl_nieuws", "rtl_economie"],
 
     "Regionaal": [
         "west_algemeen", "west_opsporing", "west_denhaag", "west_delft", "west_leiden", "west_westland",
@@ -240,6 +247,11 @@ CATEGORY_FEEDS: Dict[str, List[str]] = {
 
     "RTL Nieuws": ["rtl_nieuws"],
     "RTL Binnenland": ["rtl_binnenland"],
+    "RTL Buitenland": ["rtl_buitenland"],
+    "RTL Economie": ["rtl_economie"],
+    "RTL Sport": ["rtl_sport"],
+    "RTL Tech": ["rtl_tech"],
+    "RTL Royalty": ["rtl_royalty"],
     "RTL Boulevard": ["rtl_boulevard"],
 }
 
@@ -313,6 +325,7 @@ def _abs(href: str) -> str:
     return href
 
 def _scrape_rtl_listing(list_url: str, max_items: int = 40) -> List[Dict[str, Any]]:
+    """Scrape RTL listing pages for (title, link, optional image). Best-effort."""
     out: List[Dict[str, Any]] = []
     try:
         r = requests.get(list_url, headers=HEADERS, timeout=15)
@@ -321,15 +334,33 @@ def _scrape_rtl_listing(list_url: str, max_items: int = 40) -> List[Dict[str, An
         soup = BeautifulSoup(r.text or "", "lxml")
 
         anchors = soup.find_all("a", href=True)
-        seen = set()
+        seen: set[str] = set()
+
+        def pick_img(tag) -> Optional[str]:
+            if not tag:
+                return None
+            img_tag = tag.find("img")
+            if not img_tag and tag.parent:
+                img_tag = tag.parent.find("img")
+            if not img_tag and tag.parent and tag.parent.parent:
+                img_tag = tag.parent.parent.find("img")
+            if not img_tag:
+                return None
+            img = (img_tag.get("src") or img_tag.get("data-src") or "").strip()
+            if not img:
+                srcset = (img_tag.get("srcset") or "").strip()
+                if srcset:
+                    img = srcset.split(",")[0].strip().split(" ")[0]
+            return _abs(img) if img else None
+
         for a in anchors:
-            href = _abs(a.get("href",""))
+            href = _abs(a.get("href", ""))
             if href.startswith("/"):
                 href = urljoin("https://www.rtl.nl", href)
 
             if "rtl.nl" not in href:
                 continue
-            if "/nieuws/" not in href and "/boulevard/" not in href:
+            if ("/nieuws/" not in href) and ("/boulevard/" not in href) and ("/sport/" not in href):
                 continue
             if href in seen:
                 continue
@@ -345,7 +376,7 @@ def _scrape_rtl_listing(list_url: str, max_items: int = 40) -> List[Dict[str, An
                 "link": href,
                 "dt": None,
                 "rss_summary": "",
-                "img": None,
+                "img": pick_img(a),
                 "source_label": "rtl_direct",
             })
             if len(out) >= max_items:
@@ -353,7 +384,6 @@ def _scrape_rtl_listing(list_url: str, max_items: int = 40) -> List[Dict[str, An
     except Exception:
         return out
     return out
-
 
 def _google_news_rss_site(site: str, extra_query: str = "", max_items: int = 40) -> List[Dict[str, Any]]:
     # Fallback voor sites die (deels) JS-driven zijn, zoals RTL.
@@ -371,7 +401,7 @@ def _google_news_rss_site(site: str, extra_query: str = "", max_items: int = 40)
             "link": link,
             "dt": dt,
             "summary": (entry.get("summary") or "").strip(),
-            "img": None,
+            "img": _first_image_from_entry(entry),
             "source_label": "google_news_rss",
         })
     return out
@@ -392,6 +422,43 @@ def collect_items(feed_labels: List[str], query: Optional[str]=None, max_per_fee
             got = _scrape_rtl_listing("https://www.rtl.nl/boulevard", max_items=max_per_feed)
             if not got:
                 got = _google_news_rss_site("rtl.nl", extra_query="boulevard", max_items=max_per_feed)
+            items.extend(got)
+            continue
+
+        if url == "RTL_DIRECT_BINNENLAND":
+            got = _scrape_rtl_listing("https://www.rtl.nl/nieuws/binnenland", max_items=max_per_feed)
+            if not got:
+                got = _google_news_rss_site("rtl.nl", extra_query="nieuws binnenland", max_items=max_per_feed)
+            items.extend(got)
+            continue
+        if url == "RTL_DIRECT_BUITENLAND":
+            got = _scrape_rtl_listing("https://www.rtl.nl/nieuws/buitenland", max_items=max_per_feed)
+            if not got:
+                got = _google_news_rss_site("rtl.nl", extra_query="nieuws buitenland", max_items=max_per_feed)
+            items.extend(got)
+            continue
+        if url == "RTL_DIRECT_ECONOMIE":
+            got = _scrape_rtl_listing("https://www.rtl.nl/nieuws/economie", max_items=max_per_feed)
+            if not got:
+                got = _google_news_rss_site("rtl.nl", extra_query="nieuws economie", max_items=max_per_feed)
+            items.extend(got)
+            continue
+        if url == "RTL_DIRECT_SPORT":
+            got = _scrape_rtl_listing("https://www.rtl.nl/sport", max_items=max_per_feed)
+            if not got:
+                got = _google_news_rss_site("rtl.nl", extra_query="sport", max_items=max_per_feed)
+            items.extend(got)
+            continue
+        if url == "RTL_DIRECT_TECH":
+            got = _scrape_rtl_listing("https://www.rtl.nl/nieuws/tech", max_items=max_per_feed)
+            if not got:
+                got = _google_news_rss_site("rtl.nl", extra_query="tech", max_items=max_per_feed)
+            items.extend(got)
+            continue
+        if url == "RTL_DIRECT_ROYALTY":
+            got = _scrape_rtl_listing("https://www.rtl.nl/boulevard/royalty", max_items=max_per_feed)
+            if not got:
+                got = _google_news_rss_site("rtl.nl", extra_query="royalty", max_items=max_per_feed)
             items.extend(got)
             continue
 
