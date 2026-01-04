@@ -180,7 +180,7 @@ def _render_article(it: Dict[str, Any]):
 
 # ---------- Main ----------
 
-def render_section(title: str, hours_limit: int = 24, query: str | None = None, max_items: int = 80, thumbs_n: int = 4):
+def render_section(title: str, hours_limit: int = 24, query: str | None = None, max_items: int = 80, thumbs_n: int = 4, view: str = "full"):
     _inject_fonts()
     section_key = re.sub(r"[^a-z0-9]+", "_", (title or "section").lower()).strip("_") or "section"
 
@@ -223,7 +223,26 @@ def render_section(title: str, hours_limit: int = 24, query: str | None = None, 
 
     _hero_card(hero, section_key)
 
-    # Layout zoals je mockup: links thumbnails, rechts lijst
+    # Home/compact view: alleen hero + 4 thumbs + 'Meer <categorie>' knop
+    if (view or "full").lower() in ("home", "compact"):
+        for idx, it in enumerate(thumbs, start=1):
+            _thumb_row(it, section_key, idx)
+
+        page_path = _page_path_for_section(title)
+        label = f"Meer {title}"
+        if page_path:
+            try:
+                if st.button(label, key=f"more_{section_key}", width="stretch"):
+                    st.switch_page(page_path)
+            except TypeError:
+                # oudere Streamlit: geen width-arg
+                if st.button(label, key=f"more_{section_key}"):
+                    st.switch_page(page_path)
+        else:
+            st.caption(label)
+        return
+
+    # Volledige view: links thumbnails, rechts 'Meer berichten' lijst
     left_col, right_col = st.columns([1.05, 2.25], gap="large")
 
     with left_col:
@@ -244,7 +263,10 @@ def render_section(title: str, hours_limit: int = 24, query: str | None = None, 
                     st.experimental_rerun()
                 st.caption(meta2)
             with row[1]:
-                st.link_button("Open", it.get("link", "") or "#", width="stretch")
+                try:
+                    st.link_button("Open", it.get("link", "") or "#", width="stretch")
+                except TypeError:
+                    st.link_button("Open", it.get("link", "") or "#")
 
-            if idx >= 112:  # max ~12 regels in deze kolom (lekker overzicht)
+            if idx >= 112:
                 break
