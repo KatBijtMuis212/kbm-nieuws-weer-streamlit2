@@ -15,12 +15,24 @@ except Exception as e:  # pragma: no cover
 
 # ---------- Kleine utils ----------
 
+def _uniq_key(prefix: str) -> str:
+    """Return a unique key for this session.
+
+    Streamlit vereist unieke keys per element. Voor navigatieknoppen
+    (zoals 'Meer <categorie>') is een oplopende teller per sessie prima.
+    """
+    st.session_state.setdefault('_kbm_keyseq', 0)
+    st.session_state['_kbm_keyseq'] += 1
+    return f"{prefix}_{st.session_state['_kbm_keyseq']}"
+
+
 def _as_list(x: Any) -> List[Any]:
     if x is None:
         return []
     if isinstance(x, list):
         return x
     return [x]
+
 
 def _flatten(items: Any) -> List[Dict[str, Any]]:
     # collect_items hoort List[dict] te geven, maar we maken het extra robuust.
@@ -32,15 +44,44 @@ def _flatten(items: Any) -> List[Dict[str, Any]]:
             out.append(it)
     return out
 
+
 def _norm_title(t: str) -> str:
     return re.sub(r"\s+", " ", (t or "").strip())
+
 
 def _safe_str(x: Any) -> str:
     return "" if x is None else str(x)
 
+
+# Een nette, lichte placeholder thumbnail (data-uri SVG), zodat elk item altijd een thumb heeft.
+_PLACEHOLDER_SVG = """
+<svg xmlns="http://www.w3.org/2000/svg" width="220" height="220" viewBox="0 0 220 220">
+  <defs>
+    <linearGradient id="g" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#e9edf2"/>
+      <stop offset="1" stop-color="#dfe6ee"/>
+    </linearGradient>
+  </defs>
+  <rect width="220" height="220" rx="28" fill="url(#g)"/>
+  <rect x="34" y="46" width="152" height="108" rx="18" fill="#cfd8e3"/>
+  <circle cx="82" cy="88" r="14" fill="#b8c5d6"/>
+  <path d="M54 142l38-34 24 20 34-30 44 44H54z" fill="#b8c5d6"/>
+  <rect x="34" y="168" width="120" height="14" rx="7" fill="#c7d2df"/>
+  <rect x="34" y="190" width="86" height="12" rx="6" fill="#cfd8e3"/>
+</svg>
+""".strip()
+
+
+def _svg_data_uri(svg: str) -> str:
+    b = base64.b64encode(svg.encode("utf-8")).decode("ascii")
+    return f"data:image/svg+xml;base64,{b}"
+
+
+_PLACEHOLDER_URI = _svg_data_uri(_PLACEHOLDER_SVG)
+
+
 def _pick_img(it: Dict[str, Any]) -> str:
-    # voorkeur: RSS/entry image -> og:image -> fallback
-    # NB: common.collect_items zet de hoofdafbeelding meestal in key 'img'
+    # common.py gebruikt meestal "img". We ondersteunen meerdere keys.
     for k in ("img", "image", "thumbnail", "thumb", "og_image", "media", "media_url"):
         v = it.get(k)
         if isinstance(v, str) and v.strip():
@@ -48,92 +89,111 @@ def _pick_img(it: Dict[str, Any]) -> str:
     return ""
 
 
-def _placeholder_thumb() -> str:
-    """Altijd een thumbnail: data-URI SVG placeholder (werkt online/offline)."""
-    svg = (
-        "<svg xmlns='http://www.w3.org/2000/svg' width='82' height='82' viewBox='0 0 82 82'>"
-        "<defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'>"
-        "<stop offset='0' stop-color='#2b2f36'/><stop offset='1' stop-color='#1f232a'/>"
-        "</linearGradient></defs>"
-        "<rect rx='12' ry='12' width='82' height='82' fill='url(#g)'/>"
-        "<path d='M20 54l12-14 10 12 7-8 13 17H20z' fill='#5b6472'/>"
-        "<circle cx='30' cy='30' r='6' fill='#5b6472'/>"
-        "</svg>"
-    )
-    b64 = base64.b64encode(svg.encode("utf-8")).decode("ascii")
-    return f"data:image/svg+xml;base64,{b64}"
-
 def _img_or_placeholder(it: Dict[str, Any]) -> str:
-    return _pick_img(it) or _placeholder_thumb()
+    return _pick_img(it) or _PLACEHOLDER_URI
 
 
-def _dedupe(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    seen = set()
-    out = []
-    for it in items:
-        uid = _safe_str(item_id(it)) or (_safe_str(it.get("link")) + "|" + _safe_str(it.get("title")))
-        if uid in seen:
+def _get_items_for_section(title: str, hours_limit: Optional[int] = None, query: str = "", max_items: int = 80) -> List[Dict[str, Any]]:
+    """Haal items op voor een categorie (title)."""
+    feeds = CATEGORY_FEEDS.get(title, [])
+    items = collect_items(feeds, query=query, max_items=max_items)  # verwacht list[dict]
+    items = _flatten(items)
+
+    # Optionele uren-filter (bijv. Net binnen)
+    if hours_limit and hours_limit > 0:
+        items = [it for it in items if within_hours(it.get("dt"), hours_limit)]
+
+    # Sorteer op datum (nieuwste eerst) als dt aanwezig is
+    def _sort_key(it: Dict[str, Any]):
+        return it.get("dt") or 0
+
+    items.sort(key=_sort_key, reverse=True)
+    return items
+
+
+def _page_path_for_section(title: str) -> str:
+    """Zoek automatisch de juiste Streamlit page voor een section/categorie.
+
+    We scannen /pages/*.py en zoeken naar render_section("<title>", ...).
+    Retourneert pad zoals "pages/22_Regionaal.py".
+    """
+    import os
+    import glob
+
+    title_norm = _safe_str(title)
+    candidates = glob.glob("pages/*.py")
+    for p in candidates:
+        try:
+            txt = open(p, "r", encoding="utf-8", errors="ignore").read()
+        except Exception:
             continue
-        seen.add(uid)
-        out.append(it)
-    return out
+        # heel simpel: zoeken naar render_section("Titel")
+        if f'render_section("{title_norm}"' in txt or f"render_section('{title_norm}'" in txt:
+            return p.replace("\\", "/")
+    return ""
 
-def _inject_fonts():
-    st.markdown(
-        '''
-        <style>
-        @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600&display=swap');
-        html, body, [class*="css"] { font-family: "Montserrat", sans-serif; }
-        .kbm-title { font-weight: 600; }
-        .kbm-meta { opacity:.75; font-size: .9rem; }
-        </style>
-        ''',
-        unsafe_allow_html=True
-    )
 
 def _hero_card(it: Dict[str, Any], section_key: str):
+    """Hero: grote kaart met beeld + titel overlay. Klikbaar -> in-app artikel."""
     img = _img_or_placeholder(it)
-    title = _norm_title(it.get("title",""))
+    title = _norm_title(it.get("title", ""))
     meta = f"{host(it.get('link',''))} • {pretty_dt(it.get('dt'))}".strip(" •")
     oid = item_id(it)
-
-    # Klik op hero (titel/beeld) opent in-app via query params
     href = f"?section={section_key}&open={oid}"
 
-    if img:
-        st.markdown(
-            f'''
-            <div style="position:relative;border-radius:18px;overflow:hidden;margin:12px 0;">
-              <a href="{href}" style="text-decoration:none;display:block;">
-                <img src="{img}" style="width:100%;height:230px;object-fit:cover;display:block;">
-                <div style="position:absolute;left:0;right:0;bottom:0;padding:16px 16px 14px 16px;
-                            background:linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(0,0,0,.55) 55%, rgba(0,0,0,.70) 100%);">
-                  <div class="kbm-title" style="color:#fff;font-size:22px;font-weight:800;line-height:1.2;text-shadow:0 2px 14px rgba(0,0,0,.55);">{title}</div>
-                  <div class="kbm-meta" style="color:#fff;text-shadow:0 2px 12px rgba(0,0,0,.55);">{meta}</div>
-                </div>
-              </a>
-            </div>
-            ''',
-            unsafe_allow_html=True,
-        )
-    else:
-        # fallback zonder image (nog steeds klikbaar)
-        st.markdown(f"### [{title}]({href})")
-        st.caption(meta)
+    st.markdown(
+        f"""
+        <a href="{href}" style="text-decoration:none;color:inherit;">
+          <div style="
+            position:relative;
+            border-radius:18px;
+            overflow:hidden;
+            height:220px;
+            background:#e9edf2;
+          ">
+            <img src="{img}" style="width:100%;height:100%;object-fit:cover;display:block;">
+            <div style="
+              position:absolute;inset:0;
+              background:linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(0,0,0,.55) 55%, rgba(0,0,0,.70) 100%);
+            "></div>
 
+            <div style="
+              position:absolute;left:16px;right:16px;bottom:14px;
+              color:#fff;
+            ">
+              <div style="
+                font-size:1.15rem;
+                font-weight:850;
+                line-height:1.15;
+                text-shadow:0 2px 10px rgba(0,0,0,.45);
+                overflow:hidden;
+                display:-webkit-box;
+                -webkit-line-clamp:3;
+                -webkit-box-orient:vertical;
+              ">{title}</div>
+              <div style="margin-top:6px;opacity:.9;font-size:.9rem;">{meta}</div>
+            </div>
+          </div>
+        </a>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def _thumb_row(it: Dict[str, Any], section_key: str, idx: int):
-    """Thumbnail row: beeld links, titel + meta rechts (ook op mobiel naast elkaar)."""
+    """Thumbnail row: beeld links, titel + meta rechts. Hele rij is klikbaar (in-app)."""
     img = _img_or_placeholder(it)
-    title = _norm_title(it.get("title",""))
+    title = _norm_title(it.get("title", ""))
     meta = f"{host(it.get('link',''))} • {pretty_dt(it.get('dt'))}".strip(" •")
     oid = item_id(it)
     href = f"?section={section_key}&open={oid}"
 
-    # Gebruik één HTML flex-row i.p.v. st.columns, zodat het op smalle schermen
-    # niet onder elkaar gaat stapelen.
-    img_html = f'<img src="{img}" style="width:82px;height:82px;object-fit:cover;border-radius:12px;flex:0 0 82px;display:block;">'
+    # HTML flex-row i.p.v. st.columns zodat het ook op mobiel naast elkaar blijft.
+    img_html = (
+        f'<img src="{img}" '
+        'style="width:82px;height:82px;object-fit:cover;border-radius:12px;'
+        'flex:0 0 82px;display:block;">'
+    )
 
     st.markdown(
         f"""
@@ -141,7 +201,14 @@ def _thumb_row(it: Dict[str, Any], section_key: str, idx: int):
           <div style="display:flex;gap:12px;align-items:center;margin:10px 0;">
             {img_html}
             <div style="min-width:0;line-height:1.25;">
-              <div style="font-weight:750;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;">
+              <div style="
+                font-weight:750;
+                overflow:hidden;
+                text-overflow:ellipsis;
+                display:-webkit-box;
+                -webkit-line-clamp:3;
+                -webkit-box-orient:vertical;
+              ">
                 {title}
               </div>
               <div class="kbm-meta" style="opacity:.72;margin-top:3px;font-size:0.85rem;">
@@ -153,25 +220,6 @@ def _thumb_row(it: Dict[str, Any], section_key: str, idx: int):
         """,
         unsafe_allow_html=True,
     )
-
-
-def _thumb_only(it: Dict[str, Any], section_key: str, idx: int):
-    """Compact thumbnail: beeld links (vierkant), titel eronder. Past bij jouw mockup."""
-    img = _img_or_placeholder(it)
-    title = _norm_title(it.get("title", ""))
-
-    if img:
-        st.image(img, width=120)
-    else:
-        st.markdown('<div style="width:120px;height:120px;border-radius:18px;background:#e9edf2;"></div>', unsafe_allow_html=True)
-
-    if st.button("Open", key=f"open_{section_key}_{item_id(it)}_thumb_{idx}", width="stretch"):
-        st.session_state["kbm_open_item"] = it
-        st.session_state["kbm_open_section"] = section_key
-        st.experimental_rerun()
-
-    st.caption(title)
-
 
 
 def _list_row(it: Dict[str, Any], section_key: str, idx: int):
@@ -180,17 +228,28 @@ def _list_row(it: Dict[str, Any], section_key: str, idx: int):
     title = _norm_title(it.get("title", ""))
     meta = f"{host(it.get('link',''))} • {pretty_dt(it.get('dt'))}".strip(" •")
     oid = item_id(it)
-
-    # Query params zorgen dat je op DEZE sectie blijft
     href = f"?section={section_key}&open={oid}"
+
+    img_html = (
+        f'<img src="{img}" '
+        'style="width:72px;height:72px;object-fit:cover;border-radius:12px;'
+        'flex:0 0 72px;display:block;">'
+    )
 
     st.markdown(
         f"""
         <a href="{href}" style="text-decoration:none;color:inherit;">
           <div style="display:flex;gap:12px;align-items:center;margin:10px 0;">
-            <img src="{img}" style="width:72px;height:72px;object-fit:cover;border-radius:12px;flex:0 0 72px;display:block;">
+            {img_html}
             <div style="min-width:0;line-height:1.25;">
-              <div style="font-weight:750;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;">
+              <div style="
+                font-weight:750;
+                overflow:hidden;
+                text-overflow:ellipsis;
+                display:-webkit-box;
+                -webkit-line-clamp:3;
+                -webkit-box-orient:vertical;
+              ">
                 {title}
               </div>
               <div class="kbm-meta" style="opacity:.72;margin-top:3px;font-size:0.85rem;">
@@ -204,88 +263,61 @@ def _list_row(it: Dict[str, Any], section_key: str, idx: int):
     )
 
 
-def _render_article(it: Dict[str, Any]):
-    st.markdown(f"## {_norm_title(it.get('title',''))}")
-    st.caption(f"{host(it.get('link',''))} • {pretty_dt(it.get('dt'))}".strip(" •"))
-    img = _img_or_placeholder(it)
+def _render_article(it: Dict[str, Any], section_key: str):
+    """In-app artikelweergave."""
+    title = _norm_title(it.get("title", ""))
+    link = _safe_str(it.get("link", ""))
+    img = _pick_img(it)  # in artikel mag image ook leeg zijn, geen probleem
+
+    st.markdown(f"### {title}")
+
+    meta = f"{host(link)} • {pretty_dt(it.get('dt'))}".strip(" •")
+    if meta:
+        st.caption(meta)
+
     if img:
         st.image(img, width="stretch")
 
-    # Video detectie (NU.nl /video/)
-    link = _safe_str(it.get("link"))
-    if "/video/" in link:
-        st.info("🎬 Dit lijkt een NU.nl-video. Ik probeer ’m hieronder te tonen (als embed).")
-        # simpele embed poging; als dit niet werkt blijft de knop 'Open origineel' over.
-        st.components.v1.iframe(link, height=420, scrolling=True)
-
-    # Content
-    body = it.get("content") or it.get("summary") or ""
-    if isinstance(body, str) and body.strip():
-        st.markdown(body)
+    # Body/summary
+    body = it.get("summary") or it.get("content") or ""
+    if body:
+        st.markdown(body, unsafe_allow_html=True)
     else:
-        st.warning("Dit artikel kon niet volledig uitgelezen worden (mogelijk JS/consent).")
-    st.link_button("Open origineel", link or "#", width="stretch")
+        st.info("Geen volledige tekst beschikbaar voor dit bericht.")
 
-# ---------- Main ----------
+    # Origineel link
+    if link:
+        st.link_button("Bekijk origineel", link, use_container_width=True)
 
-def _page_path_for_section(title: str) -> str | None:
-    """Find the Streamlit pages/<file>.py that renders this section title.
 
-    We scan the /pages directory for a call like render_section("Title", ...).
-    Returns the relative path (e.g. 'pages/22_Regionaal.py') suitable for st.switch_page.
+def render_section(
+    title: str,
+    hours_limit: Optional[int] = None,
+    query: str = "",
+    max_items: int = 80,
+    thumbs_n: int = 4,
+    view: str = "full",
+):
+    """Render een categorieblok.
+
+    view="home"/"compact" -> Header + 1 hero + N thumbs + knop "Meer <categorie>"
+    view="full"           -> Volledige categoriepagina met 'load more' lijst (ook thumbs!)
     """
-    try:
-        from pathlib import Path
-        import re as _re
-        pages_dir = Path(__file__).resolve().parent / "pages"
-        if not pages_dir.exists():
-            return None
-        needle = _re.compile(r'render_section\(\s*["\']' + _re.escape(title) + r'["\']', flags=_re.IGNORECASE)
-        for fp in sorted(pages_dir.glob("*.py")):
-            try:
-                src = fp.read_text(encoding="utf-8", errors="ignore")
-            except Exception:
-                continue
-            if needle.search(src):
-                return f"pages/{fp.name}"
-    except Exception:
-        return None
-    return None
+    section_key = re.sub(r"[^a-z0-9]+", "_", title.lower()).strip("_") or "section"
 
-def render_section(title: str, hours_limit: int = 24, query: str | None = None, max_items: int = 80, thumbs_n: int = 4, view: str = "full"):
-    _inject_fonts()
-    section_key = re.sub(r"[^a-z0-9]+", "_", (title or "section").lower()).strip("_") or "section"
-
-    # open article view gebeurt via query params (?section=...&open=...)
-
-    feed_labels = CATEGORY_FEEDS.get(title, [])
-    res = collect_items(feed_labels, query=query, max_per_feed=25)
-    items = res[0] if isinstance(res, tuple) else res
-    items = _flatten(items)
-
-    # tijdfilter (defensief: dt ontbreekt soms)
-    filtered = []
-    for it in items:
-        dt = it.get("dt")
-        try:
-            ok = within_hours(dt, hours_limit) if hours_limit else True
-        except Exception:
-            ok = True
-        if ok:
-            filtered.append(it)
-
-    items = _dedupe(filtered)[:max_items]
-
-    # --- In-app artikel open via query params ---
+    # --- Query params: open item in-app ---
     try:
         qp = st.query_params
-        qp_section = (qp.get("section") or "").strip().lower()
-        qp_open = (qp.get("open") or "").strip()
     except Exception:
-        qp_section = ""
-        qp_open = ""
+        qp = {}
 
-    if qp_open and qp_section == section_key:
+    qp_section = _safe_str(qp.get("section", "")) if isinstance(qp, dict) else _safe_str(qp.get("section"))
+    qp_open = _safe_str(qp.get("open", "")) if isinstance(qp, dict) else _safe_str(qp.get("open"))
+
+    items = _get_items_for_section(title, hours_limit=hours_limit, query=query, max_items=max_items)
+
+    # Als er een open=<id> is voor deze sectie: toon artikel view
+    if qp_open and (qp_section == section_key or qp_section == title):
         hit = None
         for it in items:
             if str(item_id(it)) == qp_open:
@@ -298,53 +330,63 @@ def render_section(title: str, hours_limit: int = 24, query: str | None = None, 
                 except Exception:
                     pass
                 st.experimental_rerun()
-            _render_article(hit)
+            _render_article(hit, section_key)
             return
 
-    # Niets? Toon hulp
+    # Header voor ieder blok (zeker op home)
+    st.markdown(f"## {title}")
+
     if not items:
-        st.info("Geen resultaten. Probeer een andere zoekterm of verhoog 'Max uren oud'.")
+        st.info("Geen berichten gevonden.")
         return
 
-    # Hero = eerste item, thumbs = volgende n
     hero = items[0]
-    thumbs = items[1:1+max(0, thumbs_n)]
+    rest = items[1:]
 
-    # Header op home/compact zodat je weet welke sectie je ziet
-    if (view or "full").lower() in ("home", "compact"):
-        st.markdown(f"## {title}")
+    # Hero
     _hero_card(hero, section_key)
 
-    # Home/compact view: alleen hero + 4 thumbs + 'Meer <categorie>' knop
-    if (view or "full").lower() in ("home", "compact"):
-        for idx, it in enumerate(thumbs, start=1):
-            _thumb_row(it, section_key, idx)
+    # Thumbs (onder hero)
+    n = max(0, int(thumbs_n or 0))
+    for i, it in enumerate(rest[:n]):
+        _thumb_row(it, section_key, i)
 
-        page_path = _page_path_for_section(title)
+    # Home/compact view eindigt hier + knop naar categoriepagina
+    if view in ("home", "compact"):
         label = f"Meer {title}"
+        page_path = _page_path_for_section(title)
         if page_path:
             try:
-                if st.button(label, key=f"more_{section_key}", width="stretch"):
+                if st.button(label, key=_uniq_key(f"more_{section_key}"), width="stretch"):
                     st.switch_page(page_path)
             except TypeError:
                 # oudere Streamlit: geen width-arg
-                if st.button(label, key=f"more_{section_key}"):
+                if st.button(label, key=_uniq_key(f"more_{section_key}")):
                     st.switch_page(page_path)
         else:
             st.caption(label)
         return
 
-    # Volledige view: links thumbnails, rechts 'Meer berichten' lijst
-    left_col, right_col = st.columns([1.05, 2.25], gap="large")
+    # Volledige view: lijst met meer berichten + "Laad meer" (alles met thumbnails)
+    st.markdown("### Meer berichten")
+    shown = st.session_state.get(f"kbm_shown_{section_key}", max(12, n))
+    shown = int(shown)
 
-    with left_col:
-        for idx, it in enumerate(thumbs, start=1):
-            _thumb_row(it, section_key, idx)
+    # Start na hero (en thumbs die je al liet zien)
+    start = 1 + n
+    more_items = items[start : start + shown]
+    for i, it in enumerate(more_items):
+        _list_row(it, section_key, i)
 
-    with right_col:
-        st.markdown("### Meer berichten")
-
-        for idx, it in enumerate(items[1+len(thumbs):], start=100):
-            _list_row(it, section_key, idx)
-            if idx >= 112:
-                break
+    # Laad meer knop
+    remaining = max(0, len(items) - (start + shown))
+    if remaining > 0:
+        label = f"Laad meer ({min(20, remaining)})"
+        try:
+            if st.button(label, key=_uniq_key(f"load_{section_key}"), width="stretch"):
+                st.session_state[f"kbm_shown_{section_key}"] = shown + 20
+                st.experimental_rerun()
+        except TypeError:
+            if st.button(label, key=_uniq_key(f"load_{section_key}")):
+                st.session_state[f"kbm_shown_{section_key}"] = shown + 20
+                st.experimental_rerun()
