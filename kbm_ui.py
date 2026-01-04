@@ -23,7 +23,7 @@ def _bookmark(it: dict) -> None:
     if "bookmarks" not in st.session_state:
         st.session_state.bookmarks = []
     bid = item_id(it)
-    ids = {item_id(x) for x in st.session_state.bookmarks}
+    ids = {item_id(x) for x in st.session_state.bookmarks if isinstance(x, dict)}
     if bid not in ids:
         st.session_state.bookmarks.insert(0, it)
 
@@ -61,6 +61,28 @@ def _render_preview(it: dict) -> None:
             st.toast("Bewaard ⭐")
 
 
+def _safe_collect_items(feeds: list[str], query: str | None, max_items: int):
+    """
+    common.collect_items() in jouw repo returnt: (items, stats)
+    Sommige oudere varianten returnen alleen items.
+    Deze helper vangt beide af.
+    """
+    out = collect_items(feeds, query=query, max_items=max_items)
+    if isinstance(out, tuple) and len(out) >= 1:
+        items = out[0]
+        stats = out[1] if len(out) > 1 else {}
+    else:
+        items = out
+        stats = {}
+
+    if not isinstance(items, list):
+        items = []
+
+    # filter: alleen dicts
+    items = [x for x in items if isinstance(x, dict)]
+    return items, stats
+
+
 def render_section(
     title: str,
     hours_limit: int = 24,
@@ -72,10 +94,12 @@ def render_section(
     if feeds is None:
         feeds = CATEGORY_FEEDS.get(title, [])
 
-    items = collect_items(feeds)
+    items, _stats = _safe_collect_items(feeds, query=query, max_items=max_items)
+
+    # tijdfilter (dt kan None zijn, within_hours vangt dat al af)
     items = [x for x in items if within_hours(x.get("dt"), hours_limit)]
+    # queryfilter extra (voor zekerheid)
     items = [x for x in items if _matches_query(x, query)]
-    items = items[: max(0, int(max_items))]
 
     st.markdown('<div class="kbm-card">', unsafe_allow_html=True)
     st.markdown(f"### {title}")
@@ -89,11 +113,12 @@ def render_section(
     rest = items[min(int(thumbs_n), len(items)) :]
 
     st.markdown('<div class="kbm-grid">', unsafe_allow_html=True)
+
     for it in top:
         link = it.get("link") or ""
         img = it.get("image") or ""
         src = host(link)
-        dt = pretty_dt(it.get("dt"))
+        dt_txt = pretty_dt(it.get("dt"))
         headline = it.get("title") or "Zonder titel"
 
         thumb = ""
@@ -106,12 +131,13 @@ def render_section(
   {thumb}
   <div class="kbm-item-inner">
     <div class="kbm-item-title"><a href="/Artikel?url={html.escape(link)}">{html.escape(headline)}</a></div>
-    <div class="kbm-item-meta">{html.escape(src)} • {html.escape(dt)}</div>
+    <div class="kbm-item-meta">{html.escape(src)} • {html.escape(dt_txt)}</div>
   </div>
 </div>
 """,
             unsafe_allow_html=True,
         )
+
         with st.expander("Lees preview", expanded=False):
             _render_preview(it)
 
