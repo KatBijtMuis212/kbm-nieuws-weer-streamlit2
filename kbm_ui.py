@@ -38,8 +38,9 @@ def _safe_str(x: Any) -> str:
     return "" if x is None else str(x)
 
 def _pick_img(it: Dict[str, Any]) -> str:
-    # voorkeur: feed image -> og:image -> fallback
-    for k in ("image", "thumbnail", "thumb", "og_image", "media", "media_url"):
+    # voorkeur: RSS/entry image -> og:image -> fallback
+    # NB: common.collect_items zet de hoofdafbeelding meestal in key 'img'
+    for k in ("img", "image", "thumbnail", "thumb", "og_image", "media", "media_url"):
         v = it.get(k)
         if isinstance(v, str) and v.strip():
             return v.strip()
@@ -94,14 +95,14 @@ def _hero_card(it: Dict[str, Any], section_key: str):
 
     cols = st.columns([1,1,1])
     with cols[0]:
-        st.link_button("Open origineel", it.get("link","") or "#", use_container_width=True)
+        st.link_button("Open origineel", it.get("link","") or "#", width="stretch")
     with cols[1]:
-        if st.button("Lees in app", key=f"open_{section_key}_{item_id(it)}_hero", use_container_width=True):
+        if st.button("Lees in app", key=f"open_{section_key}_{item_id(it)}_hero", width="stretch"):
             st.session_state["kbm_open_item"] = it
             st.session_state["kbm_open_section"] = section_key
             st.experimental_rerun()
     with cols[2]:
-        if st.button("⭐ Bewaar", key=f"bm_{section_key}_{item_id(it)}_hero", use_container_width=True):
+        if st.button("⭐ Bewaar", key=f"bm_{section_key}_{item_id(it)}_hero", width="stretch"):
             st.session_state.setdefault("bookmarks", [])
             st.session_state["bookmarks"].insert(0, it)
 
@@ -122,25 +123,43 @@ def _thumb_row(it: Dict[str, Any], section_key: str, idx: int):
 
     btns = st.columns([1,1,1])
     with btns[0]:
-        st.link_button("Open origineel", it.get("link","") or "#", use_container_width=True)
+        st.link_button("Open origineel", it.get("link","") or "#", width="stretch")
     with btns[1]:
-        if st.button("Lees in app", key=f"open_{section_key}_{item_id(it)}_{idx}", use_container_width=True):
+        if st.button("Lees in app", key=f"open_{section_key}_{item_id(it)}_{idx}", width="stretch"):
             st.session_state["kbm_open_item"] = it
             st.session_state["kbm_open_section"] = section_key
             st.experimental_rerun()
     with btns[2]:
-        if st.button("⭐ Bewaar", key=f"bm_{section_key}_{item_id(it)}_{idx}", use_container_width=True):
+        if st.button("⭐ Bewaar", key=f"bm_{section_key}_{item_id(it)}_{idx}", width="stretch"):
             st.session_state.setdefault("bookmarks", [])
             st.session_state["bookmarks"].insert(0, it)
 
     st.divider()
+
+def _thumb_only(it: Dict[str, Any], section_key: str, idx: int):
+    """Compact thumbnail: beeld links (vierkant), titel eronder. Past bij jouw mockup."""
+    img = _pick_img(it)
+    title = _norm_title(it.get("title", ""))
+
+    if img:
+        st.image(img, width=120)
+    else:
+        st.markdown('<div style="width:120px;height:120px;border-radius:18px;background:#e9edf2;"></div>', unsafe_allow_html=True)
+
+    if st.button("Open", key=f"open_{section_key}_{item_id(it)}_thumb_{idx}", width="stretch"):
+        st.session_state["kbm_open_item"] = it
+        st.session_state["kbm_open_section"] = section_key
+        st.experimental_rerun()
+
+    st.caption(title)
+
 
 def _render_article(it: Dict[str, Any]):
     st.markdown(f"## {_norm_title(it.get('title',''))}")
     st.caption(f"{host(it.get('link',''))} • {pretty_dt(it.get('dt'))}".strip(" •"))
     img = _pick_img(it)
     if img:
-        st.image(img, use_container_width=True)
+        st.image(img, width="stretch")
 
     # Video detectie (NU.nl /video/)
     link = _safe_str(it.get("link"))
@@ -155,7 +174,7 @@ def _render_article(it: Dict[str, Any]):
         st.markdown(body)
     else:
         st.warning("Dit artikel kon niet volledig uitgelezen worden (mogelijk JS/consent).")
-    st.link_button("Open origineel", link or "#", use_container_width=True)
+    st.link_button("Open origineel", link or "#", width="stretch")
 
 # ---------- Main ----------
 
@@ -202,11 +221,29 @@ def render_section(title: str, hours_limit: int = 24, query: str | None = None, 
 
     _hero_card(hero, section_key)
 
-    # Thumbnail lijst (exact 4/6/8 etc)
-    for idx, it in enumerate(thumbs, start=1):
-        _thumb_row(it, section_key, idx)
+    # Layout zoals je mockup: links thumbnails, rechts lijst
+    left_col, right_col = st.columns([1.05, 2.25], gap="large")
 
-    # Meer berichten (rest)
-    with st.expander("Meer berichten", expanded=False):
+    with left_col:
+        for idx, it in enumerate(thumbs, start=1):
+            _thumb_only(it, section_key, idx)
+            st.write("")
+
+    with right_col:
+        st.markdown("### Meer berichten")
         for idx, it in enumerate(items[1+len(thumbs):], start=100):
-            st.markdown(f"- [{_norm_title(it.get('title',''))}]({_safe_str(it.get('link'))})  \n<span class='kbm-meta'>{host(it.get('link',''))} • {pretty_dt(it.get('dt'))}</span>", unsafe_allow_html=True) 
+            title2 = _norm_title(it.get("title", ""))
+            meta2 = f"{host(it.get('link',''))} • {pretty_dt(it.get('dt'))}".strip(" •")
+
+            row = st.columns([3, 1], vertical_alignment="center")
+            with row[0]:
+                if st.button(title2, key=f"open_{section_key}_{item_id(it)}_list_{idx}"):
+                    st.session_state["kbm_open_item"] = it
+                    st.session_state["kbm_open_section"] = section_key
+                    st.experimental_rerun()
+                st.caption(meta2)
+            with row[1]:
+                st.link_button("Open", it.get("link", "") or "#", width="stretch")
+
+            if idx >= 112:  # max ~12 regels in deze kolom (lekker overzicht)
+                break
