@@ -8,12 +8,14 @@ def _matches_query(it: dict, query: str | None) -> bool:
     if not query:
         return True
     q = query.strip().lower()
-    hay = " ".join([
-        str(it.get("title") or ""),
-        str(it.get("summary") or ""),
-        str(it.get("description") or ""),
-        str(it.get("link") or ""),
-    ]).lower()
+    hay = " ".join(
+        [
+            str(it.get("title") or ""),
+            str(it.get("summary") or ""),
+            str(it.get("description") or ""),
+            str(it.get("link") or ""),
+        ]
+    ).lower()
     return q in hay
 
 
@@ -96,7 +98,7 @@ def render_section(
 
         thumb = ""
         if img:
-            thumb = f"""<div class="kbm-thumb" style="background-image:url('{html.escape(img)}')"></div>"""
+            thumb = f"<div class='kbm-thumb' style=\"background-image:url('{html.escape(img)}')\"></div>"
 
         st.markdown(
             f"""
