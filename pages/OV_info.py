@@ -51,11 +51,21 @@ def _departures_table(dep_json: dict):
         return
     st.dataframe(rows, use_container_width=True, hide_index=True)
 
-def _stop_label(stop: dict) -> str:
-    name = stop.get("ScheduleName") or stop.get("StopName") or "Onbekende halte"
-    town = stop.get("Town") or ""
-    code = stop.get("StopCode") or ""
-    return f"{name} ({code})" if not town else f"{name} — {town} ({code})"
+def _stop_label(stop) -> str:
+    """Maak een leesbaar label, ook als de API iets 'raars' teruggeeft."""
+    if isinstance(stop, dict):
+        name = stop.get("ScheduleName") or stop.get("StopName") or stop.get("Name") or "Onbekende halte"
+        town = stop.get("Town") or stop.get("Place") or ""
+        code = stop.get("StopCode") or stop.get("Code") or ""
+        base = f"{name} ({code})" if code else f"{name}"
+        return f"{base}" if not town else f"{name} — {town} ({code})" if code else f"{name} — {town}"
+    # Soms komt er een string terug (bv. alleen de naam)
+    if isinstance(stop, str):
+        s = stop.strip()
+        return s if s else "Onbekende halte"
+    # Fallback
+    return "Onbekende halte"
+
 
 with tab1:
     q = st.text_input(
@@ -78,15 +88,25 @@ with tab1:
     last_t = st.session_state.get("ov_last_t", 0.0)
 
     should_search = False
-    if q and len(q) >= 2 and q != last_q:
+    if q and len(q) >= 1 and q != last_q:
         # max ~2 searches per seconde
-        if time.time() - float(last_t or 0.0) > 0.45:
+        if time.time() - float(last_t or 0.0) > 0.25:
             should_search = True
 
     if (go and q) or should_search:
         try:
             with st.spinner("Zoeken…"):
                 raw = search_stops_smart(q)
+                # Typfoutje? Probeer automatisch een paar varianten (korter maken) zodat je tóch opties ziet.
+                if not raw and len(q) >= 3:
+                    for qq in (q[:-1], q[:-2], q.split(" ")[0]):
+                        qq = (qq or "").strip()
+                        if len(qq) < 2:
+                            continue
+                        raw = search_stops_smart(qq)
+                        if raw:
+                            st.caption(f"Ik vond niets op **{q}** — wel resultaten op **{qq}**.")
+                            break
 
             # Normaliseer: we willen altijd een lijst van dicts (of lege lijst)
             res = []
