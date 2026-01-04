@@ -52,27 +52,59 @@ def _departures_table(dep_json: dict):
     st.dataframe(rows, use_container_width=True, hide_index=True)
 
 def _stop_label(stop) -> str:
-    """Maak een leesbaar label, ook als de API iets 'raars' teruggeeft."""
-    if isinstance(stop, dict):
-        name = stop.get("ScheduleName") or stop.get("StopName") or stop.get("Name") or "Onbekende halte"
-        town = stop.get("Town") or stop.get("Place") or ""
-        code = stop.get("StopCode") or stop.get("Code") or ""
-        base = f"{name} ({code})" if code else f"{name}"
-        return f"{base}" if not town else f"{name} — {town} ({code})" if code else f"{name} — {town}"
-    # Soms komt er een string terug (bv. alleen de naam)
+    """Maak een nette label voor de dropdown, ongeacht of 'stop' dict/str/None is."""
+    if not stop:
+        return "Onbekende halte"
+    # Soms geeft de API een string terug
     if isinstance(stop, str):
         s = stop.strip()
         return s if s else "Onbekende halte"
-    # Fallback
-    return "Onbekende halte"
+    # Soms nestelt het object anders (bv. {"Stop": {...}})
+    if isinstance(stop, dict) and "Stop" in stop and isinstance(stop.get("Stop"), dict):
+        stop = stop.get("Stop")  # type: ignore
+
+    if isinstance(stop, dict):
+        name = (stop.get("ScheduleName") or stop.get("StopName") or stop.get("Name") or "").strip()
+        town = (stop.get("Town") or stop.get("City") or stop.get("Locality") or "").strip()
+        code = (stop.get("StopCode") or stop.get("Code") or stop.get("Id") or stop.get("StopId") or "").strip()
+        if name and town and code:
+            return f"{name} — {town} ({code})"
+        if name and town:
+            return f"{name} — {town}"
+        if name and code:
+            return f"{name} ({code})"
+        if name:
+            return name
+        if town and code:
+            return f"{town} ({code})"
+        if town:
+            return town
+        if code:
+            return code
+
+    # Laatste redmiddel
+    return str(stop)
 
 
 with tab1:
-    q = st.text_input(
-        "Zoek halte",
-        placeholder="bijv. Huizen Zuiderzee, Amsterdam Centraal, Gouda Station…",
-        key="ov_q",
-    ).strip()
+    # "Tijdens typen" (per toetsaanslag) werkt alleen met een keyup-component.
+    # We proberen st_keyup; als die niet beschikbaar is (lokaal), vallen we terug op text_input.
+    q_raw = ""
+    try:
+        from streamlit_keyup import st_keyup  # type: ignore
+        q_raw = st_keyup(
+            "Zoek halte",
+            placeholder="bijv. Huizen Zuiderzee, Amsterdam Centraal, Gouda Station…",
+            key="ov_q_keyup",
+        ) or ""
+    except Exception:
+        q_raw = st.text_input(
+            "Zoek halte",
+            placeholder="bijv. Huizen Zuiderzee, Amsterdam Centraal, Gouda Station…",
+            key="ov_q",
+        ) or ""
+
+    q = q_raw.strip()
 
     colA, colB = st.columns([0.65, 0.35], gap="small")
     with colA:
