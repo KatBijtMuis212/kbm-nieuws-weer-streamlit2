@@ -180,6 +180,30 @@ def _render_article(it: Dict[str, Any]):
 
 # ---------- Main ----------
 
+def _page_path_for_section(title: str) -> str | None:
+    """Find the Streamlit pages/<file>.py that renders this section title.
+
+    We scan the /pages directory for a call like render_section("Title", ...).
+    Returns the relative path (e.g. 'pages/22_Regionaal.py') suitable for st.switch_page.
+    """
+    try:
+        from pathlib import Path
+        import re as _re
+        pages_dir = Path(__file__).resolve().parent / "pages"
+        if not pages_dir.exists():
+            return None
+        needle = _re.compile(r'render_section\(\s*["\']' + _re.escape(title) + r'["\']', flags=_re.IGNORECASE)
+        for fp in sorted(pages_dir.glob("*.py")):
+            try:
+                src = fp.read_text(encoding="utf-8", errors="ignore")
+            except Exception:
+                continue
+            if needle.search(src):
+                return f"pages/{fp.name}"
+    except Exception:
+        return None
+    return None
+
 def render_section(title: str, hours_limit: int = 24, query: str | None = None, max_items: int = 80, thumbs_n: int = 4, view: str = "full"):
     _inject_fonts()
     section_key = re.sub(r"[^a-z0-9]+", "_", (title or "section").lower()).strip("_") or "section"
