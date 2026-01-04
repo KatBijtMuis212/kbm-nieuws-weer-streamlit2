@@ -1,15 +1,27 @@
+from __future__ import annotations
+
 import time
 from datetime import datetime
+from typing import Any
 
 import streamlit as st
 from streamlit_js_eval import streamlit_js_eval
+from streamlit_autorefresh import st_autorefresh
 
-from ov_api import search_stops_smart, nearby_stops, departures_by_stopcode, departures_by_nametown
+from ov_all import (
+    search_stops_smart,
+    nearby_stops,
+    departures_by_stopcode,
+    departures_by_nametown,
+    normalize_departures,
+    group_by_mode,
+)
 
 st.set_page_config(page_title="OV Info", page_icon="🚌", layout="wide")
 
+
 # ----------------------------
-# Styling: busbord vibe
+# Styling: “busbord” vibe
 # ----------------------------
 st.markdown(
     """
@@ -22,7 +34,7 @@ st.markdown(
 .kbm-pill{display:inline-flex; align-items:center; gap:8px; padding:8px 12px; border-radius:999px;
          background:rgba(255,255,255,.08); color:#fff; border:1px solid rgba(255,255,255,.10);}
 .kbm-board{margin-top:14px; background:#0a0f14; border-radius:16px; padding:12px; border:1px solid rgba(255,255,255,.08);}
-.kbm-row{display:grid; grid-template-columns:110px 90px 1fr 110px 110px; gap:10px; padding:10px 10px;
+.kbm-row{display:grid; grid-template-columns:110px 90px 1fr 120px 90px; gap:10px; padding:10px 10px;
         border-radius:12px; align-items:center;}
 .kbm-row + .kbm-row{margin-top:8px;}
 .kbm-row.h{background:rgba(255,255,255,.06); color:rgba(255,255,255,.85); font-weight:800; text-transform:uppercase; font-size:12px;}
@@ -30,13 +42,15 @@ st.markdown(
 .kbm-time{font-size:22px; font-weight:900;}
 .kbm-line{font-size:20px; font-weight:900;}
 .kbm-dest{font-size:18px; font-weight:800;}
-.kbm-min{font-size:16px; font-weight:900;}
+.kbm-min{font-size:14px; font-weight:900;}
 .kbm-plat{font-size:14px; opacity:.9}
 .kbm-badge{display:inline-block; padding:4px 8px; border-radius:999px; font-size:12px; font-weight:900; border:1px solid rgba(255,255,255,.14);}
 .ok{background:rgba(46,204,113,.18);}
 .warn{background:rgba(241,196,15,.18);}
 .bad{background:rgba(231,76,60,.18);}
+.gray{background:rgba(255,255,255,.08);}
 .smallcap{opacity:.75; font-size:12px;}
+.kbm-mode{margin-top:16px; font-size:18px; font-weight:900; color:#fff;}
 </style>
 """,
     unsafe_allow_html=True,
@@ -48,9 +62,9 @@ st.markdown(
   <div class="kbm-ov-head">
     <div>
       <div class="kbm-ov-title">🚌 OV Info</div>
-      <div class="kbm-ov-sub">Zoek een halte op naam (live tijdens typen) of gebruik live locatie voor haltes in de buurt.</div>
+      <div class="kbm-ov-sub">Live zoeken tijdens typen + live locatie. Vertrektijden per BUS / TRAM / METRO / TREIN.</div>
     </div>
-    <div class="kbm-pill">🔑 Vertrektijd.info API</div>
+    <div class="kbm-pill">🔁 Realtime vertrektijden (best effort)</div>
   </div>
 </div>
 """,
@@ -60,62 +74,15 @@ st.markdown(
 tab1, tab2 = st.tabs(["🔎 Zoeken", "📍 Live locatie"])
 
 
-# ----------------------------
-# Helpers
-# ----------------------------
-def _fmt_dt(s: str) -> str:
-    try:
-        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
-        return dt.astimezone().strftime("%H:%M")
-    except Exception:
-        return s or "—"
-
-
-def _mins_until(iso: str) -> int | None:
-    try:
-        dt = datetime.fromisoformat(iso.replace("Z", "+00:00")).astimezone()
-        mins = int(round((dt - datetime.now().astimezone()).total_seconds() / 60))
-        return mins
-    except Exception:
-        return None
-
-
-def _stop_obj(stop):
-    if isinstance(stop, dict) and "Stop" in stop and isinstance(stop.get("Stop"), dict):
-        return stop["Stop"]
-    return stop
-
-
-def _get_stopcode(stop) -> str | None:
-    stop = _stop_obj(stop)
-    if not isinstance(stop, dict):
-        return None
-    for k in ("StopCode", "Code", "Id", "StopId", "stopCode", "stop_id"):
-        v = stop.get(k)
-        if v:
-            return str(v).strip()
-    return None
-
-
-def _get_town_and_name(stop) -> tuple[str | None, str | None]:
-    stop = _stop_obj(stop)
-    if not isinstance(stop, dict):
-        return (None, None)
-    town = (stop.get("Town") or stop.get("City") or stop.get("Locality") or "").strip() or None
-    name = (stop.get("ScheduleName") or stop.get("StopName") or stop.get("Name") or "").strip() or None
-    return (town, name)
-
-
-def _stop_label(stop) -> str:
+def _stop_label(stop: Any) -> str:
     if not stop:
         return "Onbekende halte"
     if isinstance(stop, str):
         return stop.strip() or "Onbekende halte"
-    stop = _stop_obj(stop)
     if isinstance(stop, dict):
         name = (stop.get("ScheduleName") or stop.get("StopName") or stop.get("Name") or "").strip()
         town = (stop.get("Town") or stop.get("City") or stop.get("Locality") or "").strip()
-        code = _get_stopcode(stop) or ""
+        code = (stop.get("StopCode") or stop.get("Code") or stop.get("Id") or stop.get("StopId") or "").strip()
         if name and town and code:
             return f"{name} — {town} ({code})"
         if name and town:
@@ -124,8 +91,6 @@ def _stop_label(stop) -> str:
             return f"{name} ({code})"
         if name:
             return name
-        if town and code:
-            return f"{town} ({code})"
         if town:
             return town
         if code:
@@ -133,78 +98,67 @@ def _stop_label(stop) -> str:
     return str(stop)
 
 
-def _departures_to_rows(dep_json: dict) -> list[dict]:
-    btmf = dep_json.get("BTMF") or []
-    train = dep_json.get("TRAIN") or []
-    rows = []
-
-    def push(d: dict, typ: str):
-        exp = d.get("ExpectedDeparture") or d.get("PlannedDeparture") or ""
-        mins = _mins_until(exp) if exp else None
-        rows.append(
-            {
-                "time": _fmt_dt(exp),
-                "line": d.get("LineNumber") or d.get("LineName") or "—",
-                "dest": d.get("Destination") or "—",
-                "mins": mins,
-                "plat": d.get("Platform") or "",
-                "typ": d.get("TransportType") or typ,
-                "status": d.get("VehicleStatus") or "",
-                "raw": d,
-            }
-        )
-
-    for block in btmf:
-        for d in (block.get("Departures") or []):
-            push(d, "BTMF")
-    for block in train:
-        for d in (block.get("Departures") or []):
-            push(d, "TRAIN")
-
-    # sort
-    rows.sort(key=lambda r: (9999 if r["mins"] is None else r["mins"]))
-    return rows
+def _pick_stopcode(stop: dict) -> str | None:
+    for k in ("StopCode", "Code", "Id", "StopId", "stopCode", "stop_id"):
+        v = stop.get(k)
+        if v:
+            return str(v).strip()
+    return None
 
 
-def _render_board(rows: list[dict], max_rows: int = 16):
+def _badge_for(dep) -> str:
+    # delay/status badge
+    if dep.delay_min >= 5:
+        return '<span class="kbm-badge bad">+%d</span>' % dep.delay_min
+    if dep.delay_min >= 2:
+        return '<span class="kbm-badge warn">+%d</span>' % dep.delay_min
+    if dep.status and "cancel" in dep.status.lower():
+        return '<span class="kbm-badge bad">CANCEL</span>'
+    if dep.status and "storing" in dep.status.lower():
+        return '<span class="kbm-badge warn">STORING</span>'
+    return '<span class="kbm-badge ok">OK</span>'
+
+
+def _mins_until(dt_utc):
+    try:
+        now = datetime.utcnow().timestamp()
+        return int(round((dt_utc.timestamp() - now) / 60))
+    except Exception:
+        return None
+
+
+def _render_mode_block(mode: str, deps, max_rows: int = 10):
+    st.markdown(f'<div class="kbm-mode">{mode}</div>', unsafe_allow_html=True)
     st.markdown('<div class="kbm-board">', unsafe_allow_html=True)
     st.markdown(
         """
 <div class="kbm-row h">
-  <div>tijd</div><div>lijn</div><div>richting</div><div>vertrekt</div><div>perron</div>
+  <div>tijd</div><div>lijn</div><div>richting</div><div>status</div><div>perron</div>
 </div>
 """,
         unsafe_allow_html=True,
     )
 
-    if not rows:
-        st.info("Geen vertrektijden gevonden (nu).")
+    if not deps:
         st.markdown("</div>", unsafe_allow_html=True)
+        st.info(f"Geen {mode}-vertrekken gevonden.")
         return
 
-    for r in rows[:max_rows]:
-        mins = r["mins"]
-        if mins is None:
-            badge = '<span class="kbm-badge warn">?</span>'
-            mins_txt = "—"
-        elif mins <= 0:
-            badge = '<span class="kbm-badge bad">NU</span>'
-            mins_txt = "nu"
-        elif mins <= 3:
-            badge = '<span class="kbm-badge warn">BINNENKORT</span>'
-            mins_txt = f"{mins} min"
-        else:
-            badge = '<span class="kbm-badge ok">OK</span>'
-            mins_txt = f"{mins} min"
+    for dep in deps[:max_rows]:
+        t_local = dep.departure_time.astimezone().strftime("%H:%M")
+        badge = _badge_for(dep)
+        mins = _mins_until(dep.departure_time)
+        mins_txt = "—" if mins is None else ("NU" if mins <= 0 else f"{mins} min")
+        plat = dep.platform or ""
 
         st.markdown(
             f"""
 <div class="kbm-row r">
-  <div class="kbm-time">{r['time']}</div>
-  <div class="kbm-line">{r['line']}</div>
-  <div class="kbm-dest">{r['dest']} <span class="smallcap">({r['typ']})</span></div>
+  <div class="kbm-time">{t_local}</div>
+  <div class="kbm-line">{dep.line}</div>
+  <div class="kbm-dest">{dep.destination}</div>
   <div class="kbm-min">{badge} {mins_txt}</div>
-  <div class="kbm-plat">{r['plat']}</div>
+  <div class="kbm-plat">{plat}</div>
 </div>
 """,
             unsafe_allow_html=True,
@@ -213,160 +167,113 @@ def _render_board(rows: list[dict], max_rows: int = 16):
     st.markdown("</div>", unsafe_allow_html=True)
 
 
-def _search_live(q: str) -> list[dict]:
-    """Search with type-o tolerance: if no results, try trimmed variants."""
-    q = (q or "").strip()
-    if not q:
-        return []
+def _fetch_departures_for_stop(stop: dict):
+    stopcode = _pick_stopcode(stop)
+    if stopcode:
+        raw = departures_by_stopcode(stopcode)
+        deps = normalize_departures(raw)
+        return deps
 
-    raw = search_stops_smart(q)
+    # fallback: town + name
+    town = (stop.get("Town") or stop.get("City") or stop.get("Locality") or "").strip()
+    name = (stop.get("ScheduleName") or stop.get("StopName") or stop.get("Name") or "").strip()
+    if town and name:
+        raw = departures_by_nametown(town, name)
+        deps = normalize_departures(raw)
+        return deps
 
-    # typefout? probeer korter
-    if not raw and len(q) >= 3:
-        for qq in (q[:-1], q[:-2], q.split(" ")[0]):
-            qq = (qq or "").strip()
-            if len(qq) < 2:
-                continue
-            raw = search_stops_smart(qq)
-            if raw:
-                st.caption(f"Ik vond niets op **{q}** — wel resultaten op **{qq}**.")
-                break
-
-    # normaliseer naar list[dict]
-    res = []
-    if isinstance(raw, dict):
-        raw = raw.get("Stops") or raw.get("results") or raw.get("stops") or []
-    if isinstance(raw, list):
-        for item in raw:
-            if isinstance(item, dict):
-                res.append(item)
-            elif isinstance(item, str) and item.strip():
-                res.append({"StopName": item.strip()})
-    elif isinstance(raw, str) and raw.strip():
-        res = [{"StopName": raw.strip()}]
-    return res
+    return []
 
 
 # ----------------------------
-# TAB 1 — Zoeken (live typing)
+# TAB 1 — Zoeken (live)
 # ----------------------------
 with tab1:
-    # Live typing via st_keyup
-    q_raw = ""
     try:
         from streamlit_keyup import st_keyup  # type: ignore
-
-        q_raw = st_keyup(
-            "Zoek halte",
-            placeholder="bijv. Utrecht Centraal, Huizen Zuiderzee, Gouda Station…",
-            key="ov_q_keyup",
-        ) or ""
+        q_raw = st_keyup("Zoek halte", placeholder="bijv. Utrecht Centraal, Huizen Zuiderzee…", key="ov_q") or ""
     except Exception:
-        q_raw = st.text_input(
-            "Zoek halte",
-            placeholder="Installeer streamlit-keyup voor live typen…",
-            key="ov_q",
-        ) or ""
+        q_raw = st.text_input("Zoek halte", placeholder="(installeer streamlit-keyup voor live typen)", key="ov_q_fallback") or ""
 
     q = q_raw.strip()
 
-    colA, colB, colC = st.columns([0.55, 0.25, 0.20], gap="small")
-    with colA:
-        auto = st.toggle("Live zoeken", value=True)
-    with colB:
-        auto_refresh = st.toggle("Auto-refresh vertrektijden", value=False)
-    with colC:
+    c1, c2, c3, c4 = st.columns([0.35, 0.20, 0.25, 0.20], gap="small")
+    with c1:
+        live = st.toggle("Live zoeken", value=True)
+    with c2:
+        max_rows = st.selectbox("Toon", [10, 15, 20], index=0)
+    with c3:
+        auto_refresh = st.toggle("Auto-refresh (30s)", value=True)
+    with c4:
         debug = st.toggle("Debug", value=False)
 
-    # throttle live searches
-    last_q = st.session_state.get("ov_last_q", "")
-    last_t = float(st.session_state.get("ov_last_t", 0.0))
+    if auto_refresh:
+        st_autorefresh(interval=30_000, key="ov_autorefresh")
 
-    if auto and q and q != last_q and (time.time() - last_t) > 0.25:
-        with st.spinner("Zoeken…"):
-            res = _search_live(q)
-        st.session_state["ov_last_results"] = res
-        st.session_state["ov_last_q"] = q
-        st.session_state["ov_last_t"] = time.time()
+    # Live query throttle
+    if live and q:
+        last_q = st.session_state.get("ov_last_q", "")
+        last_t = float(st.session_state.get("ov_last_t", 0.0))
+        if q != last_q and (time.time() - last_t) > 0.20:
+            res = search_stops_smart(q)
+            # typefout fallback: probeer kortere variant
+            if not res and len(q) >= 3:
+                for qq in (q[:-1], q[:-2], q.split(" ")[0]):
+                    qq = qq.strip()
+                    if len(qq) < 2:
+                        continue
+                    res = search_stops_smart(qq)
+                    if res:
+                        st.caption(f"Ik vond niets op **{q}**, wel op **{qq}**.")
+                        break
 
-    res = st.session_state.get("ov_last_results", []) or []
+            st.session_state["ov_results"] = res
+            st.session_state["ov_last_q"] = q
+            st.session_state["ov_last_t"] = time.time()
+
+    res = st.session_state.get("ov_results", []) or []
     if res:
-        st.caption(f"Aantal resultaten: {len(res)}")
-
         if debug:
-            st.json(res[0])
+            st.json(res[:2])
 
-        # labels -> item (uniques)
+        # unique labels
         options = {}
-        counts = {}
-        for s in res:
-            label = _stop_label(s)
-            counts[label] = counts.get(label, 0) + 1
-            if counts[label] > 1:
-                label = f"{label}  #{counts[label]}"
-            options[label] = s
+        seen = {}
+        for s in res[:60]:
+            lab = _stop_label(s)
+            seen[lab] = seen.get(lab, 0) + 1
+            if seen[lab] > 1:
+                lab = f"{lab}  #{seen[lab]}"
+            options[lab] = s
 
         choice = st.selectbox("Kies halte", list(options.keys()), key="ov_pick")
-        st.session_state["ov_selected_stop"] = options.get(choice)
+        st.session_state["ov_selected"] = options.get(choice)
 
-    sel = st.session_state.get("ov_selected_stop")
-    if sel:
+    stop = st.session_state.get("ov_selected")
+    if stop:
         st.markdown("## Vertrektijden")
-        st.caption(_stop_label(sel))
+        st.caption(_stop_label(stop))
 
-        # optioneel auto-refresh
-        if auto_refresh:
-            st.caption("⏱️ Auto-refresh staat aan (elke 20 sec).")
-            time.sleep(0.1)
-            st.rerun()
+        deps = _fetch_departures_for_stop(stop)
+        groups = group_by_mode(deps)
 
-        try:
-            with st.spinner("Vertrektijden ophalen…"):
-                stopcode = _get_stopcode(sel)
+        # altijd per modaliteit blokken (voegt overzicht toe)
+        # volgorde
+        for mode in ["BUS", "TRAM", "METRO", "TREIN"]:
+            if mode in groups:
+                _render_mode_block(mode, groups[mode], max_rows=max_rows)
 
-                dep_rows = []
-                if stopcode:
-                    dep = departures_by_stopcode(stopcode)
-                    dep_rows = _departures_to_rows(dep) if isinstance(dep, dict) else []
-                else:
-                    # Fallback: probeer departures op town+stopnaam
-                    town, name = _get_town_and_name(sel)
-                    if town and name:
-                        raw_list = departures_by_nametown(town, name)
-                        # best-effort parse: maak simpele rows
-                        if isinstance(raw_list, list):
-                            for d in raw_list:
-                                if not isinstance(d, dict):
-                                    continue
-                                exp = d.get("ExpectedDeparture") or d.get("PlannedDeparture") or d.get("departure") or ""
-                                mins = _mins_until(exp) if exp else None
-                                dep_rows.append(
-                                    {
-                                        "time": _fmt_dt(exp),
-                                        "line": d.get("LineNumber") or d.get("line") or d.get("LineName") or "—",
-                                        "dest": d.get("Destination") or d.get("destination") or "—",
-                                        "mins": mins,
-                                        "plat": d.get("Platform") or d.get("platform") or "",
-                                        "typ": d.get("TransportType") or d.get("type") or "—",
-                                        "status": d.get("VehicleStatus") or "",
-                                        "raw": d,
-                                    }
-                                )
-                            dep_rows.sort(key=lambda r: (9999 if r["mins"] is None else r["mins"]))
-                    else:
-                        st.warning("Deze halte mist StopCode én (plaats/naam). Kies een andere optie uit de lijst.")
-
-            _render_board(dep_rows)
-
-        except Exception as e:
-            st.error(f"Vertrektijd.info fout: {e}")
+        # overige modes
+        for mode, lst in groups.items():
+            if mode not in {"BUS", "TRAM", "METRO", "TREIN"}:
+                _render_mode_block(mode, lst, max_rows=max_rows)
 
 
 # ----------------------------
-# TAB 2 — Live locatie (Promise JS)
+# TAB 2 — Live locatie (werkt)
 # ----------------------------
 with tab2:
-    st.caption("Zorg dat je browser locatie-permissie aan staat. In Streamlit Cloud moet je soms 1x opnieuw toestaan.")
+    st.caption("Tip: sta locatie toe in je browser (slotje links van de URL).")
 
     js_geo = """
 new Promise((resolve) => {
@@ -378,56 +285,43 @@ new Promise((resolve) => {
 })
 """
 
-    if st.button("📍 Pak live locatie", type="primary", use_container_width=True, key="ov_geo_btn"):
+    if st.button("📍 Pak live locatie", type="primary", use_container_width=True):
         loc = streamlit_js_eval(js_expressions=js_geo, want_output=True, key="ov_geo")
-        st.session_state["ov_live_loc"] = loc
+        st.session_state["ov_loc"] = loc
 
-    loc = st.session_state.get("ov_live_loc")
+    loc = st.session_state.get("ov_loc")
     if not loc or (isinstance(loc, dict) and loc.get("error")):
-        st.info("Geen locatie gekregen. Check permissies in je browser (slotje links van de URL).")
+        st.info("Nog geen locatie. Klik op ‘Pak live locatie’ en sta locatie toe.")
         if isinstance(loc, dict) and loc.get("error"):
-            st.caption(f"Browser error: {loc.get('message')} (code {loc.get('code')})")
+            st.caption(f"Browser: {loc.get('message')} (code {loc.get('code')})")
         st.stop()
 
-    coords = loc.get("coords", {}) if isinstance(loc, dict) else {}
+    coords = loc.get("coords", {})
     lat = coords.get("latitude")
     lon = coords.get("longitude")
     if lat is None or lon is None:
-        st.info("Geen locatie gekregen. Check permissies in je browser.")
+        st.warning("Locatie ontvangen maar zonder coords. Probeer opnieuw.")
         st.stop()
 
-    st.success(f"Locatie: {float(lat):.5f}, {float(lon):.5f}  • acc ±{coords.get('accuracy','?')} m")
+    st.success(f"Locatie: {float(lat):.5f}, {float(lon):.5f} • acc ±{coords.get('accuracy','?')} m")
+    dist = st.slider("Zoekradius (meter)", 200, 2000, 700, 50)
 
-    dist = st.slider("Zoekradius (meter)", 200, 2000, 700, 50, key="ov_geo_dist")
-
-    with st.spinner("Haltes in de buurt zoeken…"):
-        stops = nearby_stops(float(lat), float(lon), int(dist))
-
+    stops = nearby_stops(float(lat), float(lon), int(dist))
     if not stops:
         st.warning("Geen haltes gevonden in deze radius.")
         st.stop()
 
-    # sort best-effort on Distance
-    def _dist(s):
-        try:
-            return float(_stop_obj(s).get("Distance", 9e9))
-        except Exception:
-            return 9e9
-
-    stops_sorted = sorted(stops, key=_dist)
-
     options = {}
-    counts = {}
-    for s in stops_sorted[:40]:
-        label = _stop_label(s)
-        counts[label] = counts.get(label, 0) + 1
-        if counts[label] > 1:
-            label = f"{label}  #{counts[label]}"
-        options[label] = s
+    seen = {}
+    for s in stops[:50]:
+        lab = _stop_label(s)
+        seen[lab] = seen.get(lab, 0) + 1
+        if seen[lab] > 1:
+            lab = f"{lab}  #{seen[lab]}"
+        options[lab] = s
 
-    choice = st.selectbox("Dichtbijzijnde haltes", list(options.keys()), key="ov_geo_pick")
-    sel = options.get(choice)
-    st.session_state["ov_selected_stop"] = sel
+    choice = st.selectbox("Dichtbijzijnde haltes", list(options.keys()))
+    st.session_state["ov_selected"] = options.get(choice)
 
-    if st.button("Toon vertrektijden", use_container_width=True, key="ov_geo_show"):
-        st.rerun()
+    if st.button("Toon vertrektijden", use_container_width=True):
+        st.switch_page("pages/OV_info.py")
