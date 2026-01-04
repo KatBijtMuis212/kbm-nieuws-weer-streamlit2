@@ -1,94 +1,111 @@
-# -*- coding: utf-8 -*-
 import streamlit as st
-import datetime as dt
-
-from ov_data import (
-    fetch_ovapi_departures,
-    fetch_vertrektijd_departures,
-    human_minutes,
+from streamlit_javascript import st_javascript
+from common import (
+    vt_find_stops_by_name,
+    vt_find_stops_by_name_town,
+    vt_find_stops_by_geo,
+    vt_departures_by_town_stop,
 )
 
-st.set_page_config(page_title="OV", page_icon="🚌", layout="wide")
-st.markdown("# 🚌 Realtime OV")
+st.set_page_config(page_title="OV info", page_icon="🚌", layout="wide")
+st.markdown("# 🚌 OV info (live)")
 
-st.caption("Je kunt nu zoeken op **plaats + halte** (zoals OV Info). "
-           "Als je een Vertrektijd.info API-key hebt, werkt dit super soepel. "
-           "Zonder key kun je nog steeds OVAPI codes gebruiken (TPC/StopAreaCode).")
+tab1, tab2 = st.tabs(["🔎 Zoeken", "📍 Live locatie"])
 
-tab_search, tab_codes = st.tabs(["🔎 Zoeken op halte", "🧩 Codes (fallback)"])
+def render_departures(town: str, stop: str):
+    st.caption(f"Halte: **{stop}** — Plaats: **{town}**")
+    try:
+        data = vt_departures_by_town_stop(town, stop)
+    except Exception as e:
+        st.error(f"Vertrektijd.info fout: {e}")
+        return
 
-def render_table(deps):
-    now = dt.datetime.now(dt.timezone.utc)
+    # data structuur verschilt soms; probeer slim te lezen
+    obj = data.get("obj") if isinstance(data, dict) else None
+    if not obj:
+        st.info("Geen vertrektijden gevonden.")
+        return
+
+    # meestal: obj is lijst met vervoer-types (BTMF/NS/etc)
     rows = []
-    for d in deps:
-        hhmm, mins = human_minutes(d, now=now)
-        rows.append({
-            "Tijd": hhmm,
-            "In": mins,
-            "Lijn": d.line,
-            "Richting": d.destination,
-            "Perron": d.platform or "—",
-            "Realtime": "✅" if d.realtime else "—",
-            "Vertraging": (f"+{int(d.delay_sec/60)} min" if d.delay_sec and d.delay_sec > 0 else ("op tijd" if d.delay_sec == 0 else "—")),
-        })
+    for group in obj if isinstance(obj, list) else [obj]:
+        deps = group.get("Departures") or []
+        for d in deps:
+            rows.append({
+                "Vertrek": d.get("ExpectedDeparture") or d.get("PlannedDeparture") or "",
+                "Type": d.get("TransportType") or "",
+                "Lijn": d.get("LineNumber") or "",
+                "Richting": d.get("Destination") or "",
+                "Vervoerder": d.get("Agency") or "",
+                "Status": d.get("DepartureStatus") or "",
+            })
+
+    if not rows:
+        st.info("Geen vertrektijden gevonden.")
+        return
+
     st.dataframe(rows, use_container_width=True, hide_index=True)
 
-with tab_search:
-    c1, c2, c3 = st.columns([0.36, 0.36, 0.28], gap="small")
-    with c1:
-        town = st.text_input("Plaats", placeholder="bijv. Huizen, Hilversum, Den Haag…")
-    with c2:
-        stop = st.text_input("Halte", placeholder="bijv. Busstation, Station, Gooiland, Erasmusplein…")
-    with c3:
-        limit = st.slider("Max", 10, 80, 30, 5)
+with tab1:
+    colA, colB = st.columns([0.6, 0.4], gap="large")
+    with colA:
+        q = st.text_input("Halte (naam)", placeholder="bijv. Busstation, Station, Centrum…")
+    with colB:
+        town = st.text_input("Plaats (optioneel, helpt enorm)", placeholder="bijv. Huizen")
 
-    api_key = st.secrets.get("VERTREKTIJD_API_KEY", "").strip()
+    if st.button("Zoek haltes", use_container_width=True):
+        if town.strip():
+            stops = vt_find_stops_by_name_town(q, town)
+        else:
+            stops = vt_find_stops_by_name(q)
 
-    if st.button("🚏 Toon vertrektijden", use_container_width=True):
-        if not (town.strip() and stop.strip()):
-            st.warning("Vul zowel **Plaats** als **Halte** in.")
-        elif api_key:
+        if not stops:
+            st.warning("Geen haltes gevonden. Probeer andere spelling of vul plaats in.")
+        else:
+            opts = []
+            for s in stops[:25]:
+                stopname = s.get("StopName") or s.get("ScheduleName") or "Onbekend"
+                stown = s.get("Town") or town or "?"
+                opts.append((stown, stopname))
+            choice = st.selectbox("Kies halte", opts, format_func=lambda x: f"{x[1]} — {x[0]}")
+            if st.button("Toon vertrektijden", use_container_width=True):
+                render_departures(choice[0], choice[1])
+
+with tab2:
+    st.info("Klik op **Vraag locatie** en geef toestemming in je browser.")
+    if st.button("📍 Vraag locatie", use_container_width=True):
+        coords = st_javascript("""
+            await new Promise((resolve) => {
+              if (!navigator.geolocation) { resolve(null); return; }
+              navigator.geolocation.getCurrentPosition(
+                (pos) => resolve({lat: pos.coords.latitude, lon: pos.coords.longitude}),
+                (err) => resolve(null),
+                {enableHighAccuracy:true, timeout:10000, maximumAge:0}
+              );
+            });
+        """)
+
+        if not coords or "lat" not in coords:
+            st.error("Geen locatie gekregen. Controleer browser-permissies.")
+        else:
+            lat, lon = float(coords["lat"]), float(coords["lon"])
+            st.success(f"Locatie: {lat:.5f}, {lon:.5f}")
+
+            dist = st.slider("Zoekafstand (km)", 0.2, 5.0, 1.0, 0.1)
             try:
-                with st.spinner("Ophalen…"):
-                    deps = fetch_vertrektijd_departures(town, stop, api_key=api_key)
-                if not deps:
-                    st.info("Geen vertrektijden gevonden. Probeer een iets andere halte-naam (bijv. 'Station' of 'Busstation').")
-                else:
-                    render_table(deps[:limit])
+                near = vt_find_stops_by_geo(lat, lon, distance_km=dist)
             except Exception as e:
                 st.error(f"Vertrektijd.info fout: {e}")
-        else:
-            st.info("Geen VERTREKTIJD_API_KEY gevonden. Zet die in Streamlit Secrets om zoeken op naam te activeren.")
-            st.markdown("**Alternatief:** gebruik hieronder OVAPI codes (TPC/StopAreaCode).")
+                near = []
 
-    st.markdown("### 📍 Live locatie (optioneel)")
-    st.markdown(
-        "Streamlit kan je live locatie alleen krijgen als je browser toestemming geeft. "
-        "Als je dit wilt, kan ik een kleine extra dependency toevoegen (streamlit-js-eval) zodat we "
-        "automatisch de dichtstbijzijnde halte kunnen tonen."
-    )
-
-with tab_codes:
-    st.markdown("### 🧩 OVAPI codes (werkt zonder API-key)")
-    st.caption("TPC is het handigst. Die kun je vinden via ovzoeker.nl (haltenummer).")
-    cc1, cc2, cc3 = st.columns([0.34, 0.33, 0.33], gap="small")
-    with cc1:
-        kind = st.selectbox("Type code", ["tpc", "stopareacode"], index=0)
-    with cc2:
-        code = st.text_input("Code", value="", placeholder="bijv. 50006541 (tpc) of GvEras (stopareacode)")
-    with cc3:
-        limit2 = st.slider("Max resultaten", 5, 60, 20, 5, key="lim2")
-
-    if st.button("Ophalen via OVAPI", use_container_width=True):
-        if not code.strip():
-            st.warning("Vul een code in.")
-        else:
-            try:
-                with st.spinner("Ophalen…"):
-                    deps = fetch_ovapi_departures(code.strip(), kind=kind)
-                if not deps:
-                    st.warning("Geen vertrektijden gevonden voor deze code.")
-                else:
-                    render_table(deps[:limit2])
-            except Exception as e:
-                st.error(f"OVAPI fout: {e}")
+            if not near:
+                st.warning("Geen haltes in de buurt gevonden.")
+            else:
+                opts = []
+                for s in near[:25]:
+                    stopname = s.get("StopName") or s.get("ScheduleName") or "Onbekend"
+                    stown = s.get("Town") or "?"
+                    opts.append((stown, stopname))
+                choice = st.selectbox("Dichtbijzijnde haltes", opts, format_func=lambda x: f"{x[1]} — {x[0]}")
+                if st.button("Toon vertrektijden (live)", use_container_width=True):
+                    render_departures(choice[0], choice[1])
