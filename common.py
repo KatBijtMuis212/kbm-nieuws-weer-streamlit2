@@ -136,6 +136,7 @@ FEEDS: Dict[str, str] = {
     # RTL direct scrape markers
     "rtl_nieuws": "RTL_DIRECT_NEWS",
     "rtl_boulevard": "RTL_DIRECT_BOULEVARD",
+    "rtl_binnenland": "RTL_DIRECT_BINNENLAND",
 }
 
 CATEGORY_FEEDS: Dict[str, List[str]] = {
@@ -165,6 +166,7 @@ CATEGORY_FEEDS: Dict[str, List[str]] = {
     "Politiek": ["nos_politiek", "trouw_politiek", "vk_achtergrond", "nrc_main"],
 
     "RTL Nieuws": ["rtl_nieuws"],
+    "RTL Binnenland": ["rtl_binnenland"],
     "RTL Boulevard": ["rtl_boulevard"],
 }
 
