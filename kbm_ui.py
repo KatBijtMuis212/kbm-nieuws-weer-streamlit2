@@ -101,46 +101,41 @@ def _hero_card(it: Dict[str, Any], section_key: str):
         st.caption(meta)
 
 
+
 def _thumb_row(it: Dict[str, Any], section_key: str, idx: int):
+    """Thumbnail row: beeld links, titel + meta rechts (ook op mobiel naast elkaar)."""
     img = _pick_img(it)
     title = _norm_title(it.get("title",""))
     meta = f"{host(it.get('link',''))} • {pretty_dt(it.get('dt'))}".strip(" •")
     oid = item_id(it)
     href = f"?section={section_key}&open={oid}"
 
-    col_img, col_txt = st.columns([1, 3.2], gap="small", vertical_alignment="center")
+    # Gebruik één HTML flex-row i.p.v. st.columns, zodat het op smalle schermen
+    # niet onder elkaar gaat stapelen.
+    img_html = (
+        f'<img src="{img}" style="width:82px;height:82px;object-fit:cover;border-radius:12px;flex:0 0 82px;display:block;">'
+        if img else
+        '<div style="width:82px;height:82px;border-radius:12px;background:#222;flex:0 0 82px;"></div>'
+    )
 
-    with col_img:
-        if img:
-            st.markdown(
-                f'''
-                <a href="{href}" style="display:block;">
-                  <img src="{img}" style="width:82px;height:82px;object-fit:cover;border-radius:12px;display:block;">
-                </a>
-                ''',
-                unsafe_allow_html=True,
-            )
-        else:
-            st.markdown(
-                f'''
-                <a href="{href}" style="display:block;">
-                  <div style="width:82px;height:82px;border-radius:12px;background:#222;"></div>
-                </a>
-                ''',
-                unsafe_allow_html=True,
-            )
-
-    with col_txt:
-        # Titel als "link" (geen zichtbare knoppen)
-        st.markdown(
-            f'''
-            <div style="line-height:1.25;">
-              <a href="{href}" style="text-decoration:none;color:inherit;font-weight:750;">{title}</a>
-              <div class="kbm-meta" style="opacity:.72;margin-top:3px;">{meta}</div>
+    st.markdown(
+        f"""
+        <a href="{href}" style="text-decoration:none;color:inherit;">
+          <div style="display:flex;gap:12px;align-items:center;margin:10px 0;">
+            {img_html}
+            <div style="min-width:0;line-height:1.25;">
+              <div style="font-weight:750;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;">
+                {title}
+              </div>
+              <div class="kbm-meta" style="opacity:.72;margin-top:3px;font-size:0.85rem;">
+                {meta}
+              </div>
             </div>
-            ''',
-            unsafe_allow_html=True,
-        )
+          </div>
+        </a>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def _thumb_only(it: Dict[str, Any], section_key: str, idx: int):
