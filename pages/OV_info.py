@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Any
 
 import streamlit as st
+from streamlit_keyup import st_keyup
 from streamlit_js_eval import streamlit_js_eval
 from streamlit_autorefresh import st_autorefresh
 
