@@ -169,6 +169,22 @@ def render_section(
         return
 
     items, _meta = collect_items(labels, query=None, max_items=max_items)
+    # de-dup by item_id (some feeds repeat items) to avoid StreamlitDuplicateElementKey
+    _seen_ids = set()
+    _dedup = []
+    for _it in items:
+        _iid = item_id(_it)
+        if _iid in _seen_ids:
+            continue
+        _seen_ids.add(_iid)
+        _dedup.append(_it)
+    items = _dedup
+    # light category sanity check: keep Binnenland/Buitenland cleaner based on URL path
+    _t = title.strip().lower()
+    if _t == 'binnenland':
+        items = [it for it in items if '/buitenland' not in (it.get('link') or '').lower()]
+    elif _t == 'buitenland':
+        items = [it for it in items if '/binnenland' not in (it.get('link') or '').lower()]
     if hours_limit:
         items = [x for x in items if within_hours(x.get("dt"), hours_limit)]
 
@@ -219,7 +235,7 @@ def render_section(
 
     # list
     st.markdown('<div class="kbm-list">', unsafe_allow_html=True)
-    for it in items[1:1+thumbs_n]:
+    for idx, it in enumerate(items[1:1+thumbs_n]):
         it_title = html.escape((it.get("title") or "").strip() or "Onbekend")
         it_link = (it.get("link") or "").strip()
         it_src = html.escape(host(it_link))
@@ -241,7 +257,7 @@ def render_section(
         """
         st.markdown(row_html, unsafe_allow_html=True)
 
-        if st.button("Lees in app", key=f"open_{section_key}_{item_id(it)}"):
+        if st.button("Lees in app", key=f"open_{section_key}_{idx}_{item_id(it)}"):
             st.session_state[f"open_{section_key}"] = item_id(it)
 
     st.markdown("</div>", unsafe_allow_html=True)
