@@ -55,40 +55,45 @@ def _ensure_css_once():
         """
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;800&display=swap');
-html, body, [class*="css"], .stApp{
+
+html, body, [class*="css"], .stApp {
   font-family: "Montserrat", system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif !important;
 }
 
-/* --- KBM Block layout (Hero + 4 rows) --- */
+/* ====== BLOK ====== */
 .kbm-block{
   margin: 0 0 26px 0;
-  background: #0b0f14;
-  border-radius: 18px;
+  background: #ffffff;
+  border-radius: 16px;
   overflow: hidden;
-  box-shadow: 0 10px 30px rgba(0,0,0,.22);
-  border: 1px solid rgba(255,255,255,.06);
+  border: 1px solid #e5e7eb;
 }
 
+/* Sectietitel */
 .kbm-block__title{
-  font-size: 42px;
+  font-size: 38px;
   font-weight: 800;
-  letter-spacing: .5px;
   text-transform: uppercase;
-  color: #ffffff;
-  padding: 18px 18px 10px 18px;
+  color: #0f172a;
+  padding: 18px 18px 12px 18px;
 }
 
+/* ====== HERO ====== */
 .kbm-hero{
   position: relative;
-  height: 270px;
-  background: #111;
+  height: 260px;
+  background: #ddd;
   background-size: cover;
   background-position: center;
 }
 
 .kbm-hero__shade{
   position:absolute; inset:0;
-  background: linear-gradient(180deg, rgba(0,0,0,0.00) 35%, rgba(0,0,0,0.92) 100%);
+  background: linear-gradient(
+    180deg,
+    rgba(0,0,0,0.00) 40%,
+    rgba(0,0,0,0.65) 100%
+  );
 }
 
 .kbm-hero__bar{
@@ -97,12 +102,12 @@ html, body, [class*="css"], .stApp{
 }
 
 .kbm-hero__title a{
-  color:#fff;
+  color:#ffffff;
   text-decoration:none;
-  font-size: 28px;
-  font-weight: 600; /* SemiBold */
-  line-height: 1.12;
-  text-shadow: 0 2px 10px rgba(0,0,0,.75);
+  font-size: 26px;
+  font-weight: 600;
+  line-height: 1.15;
+  text-shadow: 0 2px 12px rgba(0,0,0,.6);
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -111,38 +116,36 @@ html, body, [class*="css"], .stApp{
 
 .kbm-hero__meta{
   margin-top: 6px;
-  color: rgba(255,255,255,.84);
+  color: rgba(255,255,255,.85);
   font-size: 14px;
   font-weight: 400;
-  text-shadow: 0 2px 10px rgba(0,0,0,.75);
+  text-shadow: 0 2px 12px rgba(0,0,0,.6);
 }
 
+/* ====== LIJST ====== */
 .kbm-list{
-  padding: 8px 0 12px 0;
-  background: #0b0f14;
+  background: #ffffff;
 }
 
 .kbm-row{
   display:flex;
   gap: 14px;
   padding: 14px 18px;
-  border-top: 1px solid rgba(255,255,255,.07);
+  border-top: 1px solid #e5e7eb;
   align-items: center;
-  background: #0b0f14;
 }
 
 .kbm-row:hover{
-  background: rgba(255,255,255,.04);
+  background: #f8fafc;
 }
 
 .kbm-thumb{
-  width: 92px;
-  height: 92px;
-  border-radius: 14px;
-  background: rgba(255,255,255,.06);
+  width: 88px;
+  height: 88px;
+  border-radius: 12px;
+  background: #e5e7eb;
   overflow: hidden;
   flex: 0 0 auto;
-  border: 1px solid rgba(255,255,255,.10);
 }
 
 .kbm-thumb img{
@@ -152,36 +155,25 @@ html, body, [class*="css"], .stApp{
   display:block;
 }
 
+/* Titel in lijst */
 .kbm-row__title a{
-  color:#ffffff;
+  color:#0f172a;
   text-decoration:none;
-  font-size: 22px;
-  font-weight: 600; /* SemiBold */
-  line-height: 1.18;
-  text-shadow: 0 1px 8px rgba(0,0,0,.55);
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.2;
   display: -webkit-box;
-  -webkit-line-clamp: 2;  /* max 2 regels */
+  -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
 
+/* Meta (bron + tijd) */
 .kbm-row__meta{
   margin-top: 6px;
-  color: rgba(255,255,255,.78);
+  color: #475569;
   font-size: 13px;
   font-weight: 400;
-}
-
-.kbm-badge{
-  display:inline-block;
-  margin-left:10px;
-  padding:3px 8px;
-  border-radius:999px;
-  font-size:12px;
-  font-weight:800;
-  background:#214c6e;
-  color:#fff;
-  vertical-align:middle;
 }
 </style>
         """,
