@@ -3,15 +3,24 @@ from __future__ import annotations
 
 import re
 import base64
-from typing import Any, Dict, List, Tuple, Optional
+from typing import Any, Dict, List, Optional
 
 import streamlit as st
 
 # Alles wat we nodig hebben komt uit common.py. Als iets ontbreekt, vangen we het af.
 try:
-    from common import CATEGORY_FEEDS, collect_items, within_hours, host, item_id, pretty_dt, pre
+    from common import (
+        CATEGORY_FEEDS,
+        collect_items,
+        within_hours,
+        host,
+        item_id,
+        pretty_dt,
+        pre,
+    )
 except Exception as e:  # pragma: no cover
     raise ImportError(f"Kon common.py niet importeren: {e}")
+
 
 # ---------- Kleine utils ----------
 
@@ -21,8 +30,8 @@ def _uniq_key(prefix: str) -> str:
     Streamlit vereist unieke keys per element. Voor navigatieknoppen
     (zoals 'Meer <categorie>') is een oplopende teller per sessie prima.
     """
-    st.session_state.setdefault('_kbm_keyseq', 0)
-    st.session_state['_kbm_keyseq'] += 1
+    st.session_state.setdefault("_kbm_keyseq", 0)
+    st.session_state["_kbm_keyseq"] += 1
     return f"{prefix}_{st.session_state['_kbm_keyseq']}"
 
 
@@ -93,7 +102,9 @@ def _img_or_placeholder(it: Dict[str, Any]) -> str:
     return _pick_img(it) or _PLACEHOLDER_URI
 
 
-def _get_items_for_section(title: str, hours_limit: Optional[int] = None, query: str = "", max_items: int = 80) -> List[Dict[str, Any]]:
+def _get_items_for_section(
+    title: str, hours_limit: Optional[int] = None, query: str = "", max_items: int = 80
+) -> List[Dict[str, Any]]:
     """Haal items op voor een categorie (title)."""
     feeds = CATEGORY_FEEDS.get(title, [])
     items = collect_items(feeds, query=query, max_items=max_items)  # verwacht list[dict]
@@ -117,7 +128,6 @@ def _page_path_for_section(title: str) -> str:
     We scannen /pages/*.py en zoeken naar render_section("<title>", ...).
     Retourneert pad zoals "pages/22_Regionaal.py".
     """
-    import os
     import glob
 
     title_norm = _safe_str(title)
@@ -127,7 +137,6 @@ def _page_path_for_section(title: str) -> str:
             txt = open(p, "r", encoding="utf-8", errors="ignore").read()
         except Exception:
             continue
-        # heel simpel: zoeken naar render_section("Titel")
         if f'render_section("{title_norm}"' in txt or f"render_section('{title_norm}'" in txt:
             return p.replace("\\", "/")
     return ""
@@ -188,7 +197,6 @@ def _thumb_row(it: Dict[str, Any], section_key: str, idx: int):
     oid = item_id(it)
     href = f"?section={section_key}&open={oid}"
 
-    # HTML flex-row i.p.v. st.columns zodat het ook op mobiel naast elkaar blijft.
     img_html = (
         f'<img src="{img}" '
         'style="width:82px;height:82px;object-fit:cover;border-radius:12px;'
@@ -208,12 +216,8 @@ def _thumb_row(it: Dict[str, Any], section_key: str, idx: int):
                 display:-webkit-box;
                 -webkit-line-clamp:3;
                 -webkit-box-orient:vertical;
-              ">
-                {title}
-              </div>
-              <div class="kbm-meta" style="opacity:.72;margin-top:3px;font-size:0.85rem;">
-                {meta}
-              </div>
+              ">{title}</div>
+              <div class="kbm-meta" style="opacity:.72;margin-top:3px;font-size:0.85rem;">{meta}</div>
             </div>
           </div>
         </a>
@@ -249,12 +253,8 @@ def _list_row(it: Dict[str, Any], section_key: str, idx: int):
                 display:-webkit-box;
                 -webkit-line-clamp:3;
                 -webkit-box-orient:vertical;
-              ">
-                {title}
-              </div>
-              <div class="kbm-meta" style="opacity:.72;margin-top:3px;font-size:0.85rem;">
-                {meta}
-              </div>
+              ">{title}</div>
+              <div class="kbm-meta" style="opacity:.72;margin-top:3px;font-size:0.85rem;">{meta}</div>
             </div>
           </div>
         </a>
@@ -267,7 +267,7 @@ def _render_article(it: Dict[str, Any], section_key: str):
     """In-app artikelweergave."""
     title = _norm_title(it.get("title", ""))
     link = _safe_str(it.get("link", ""))
-    img = _pick_img(it)  # in artikel mag image ook leeg zijn, geen probleem
+    img = _pick_img(it)
 
     st.markdown(f"### {title}")
 
@@ -276,18 +276,21 @@ def _render_article(it: Dict[str, Any], section_key: str):
         st.caption(meta)
 
     if img:
+        # streamlit 1.52: image width param gebruikt 'width'
         st.image(img, width="stretch")
 
-    # Body/summary
     body = it.get("summary") or it.get("content") or ""
     if body:
         st.markdown(body, unsafe_allow_html=True)
     else:
         st.info("Geen volledige tekst beschikbaar voor dit bericht.")
 
-    # Origineel link
     if link:
-        st.link_button("Bekijk origineel", link, use_container_width=True)
+        try:
+            st.link_button("Bekijk origineel", link, width="stretch")
+        except TypeError:
+            # oudere streamlit
+            st.link_button("Bekijk origineel", link)
 
 
 def render_section(
@@ -311,8 +314,12 @@ def render_section(
     except Exception:
         qp = {}
 
-    qp_section = _safe_str(qp.get("section", "")) if isinstance(qp, dict) else _safe_str(qp.get("section"))
-    qp_open = _safe_str(qp.get("open", "")) if isinstance(qp, dict) else _safe_str(qp.get("open"))
+    if isinstance(qp, dict):
+        qp_section = _safe_str(qp.get("section", ""))
+        qp_open = _safe_str(qp.get("open", ""))
+    else:
+        qp_section = _safe_str(qp.get("section"))
+        qp_open = _safe_str(qp.get("open"))
 
     items = _get_items_for_section(title, hours_limit=hours_limit, query=query, max_items=max_items)
 
@@ -324,7 +331,7 @@ def render_section(
                 hit = it
                 break
         if hit:
-            if st.button("← Terug", key=f"back_{section_key}"):
+            if st.button("← Terug", key=_uniq_key(f"back_{section_key}")):
                 try:
                     st.query_params.clear()
                 except Exception:
@@ -333,7 +340,7 @@ def render_section(
             _render_article(hit, section_key)
             return
 
-    # Header voor ieder blok (zeker op home)
+    # Header voor ieder blok
     st.markdown(f"## {title}")
 
     if not items:
@@ -343,25 +350,21 @@ def render_section(
     hero = items[0]
     rest = items[1:]
 
-    # Hero
     _hero_card(hero, section_key)
 
-    # Thumbs (onder hero)
     n = max(0, int(thumbs_n or 0))
     for i, it in enumerate(rest[:n]):
         _thumb_row(it, section_key, i)
 
-    # Home/compact view eindigt hier + knop naar categoriepagina
+    # Home/compact view: eindigt hier + knop naar categoriepagina
     if view in ("home", "compact"):
         label = f"Meer {title}"
         page_path = _page_path_for_section(title)
         if page_path:
             try:
-    if st.button(label, key=_uniq_key(f"more_{section_key}"), width="stretch"):
-        st.switch_page(page_path)
-
+                if st.button(label, key=_uniq_key(f"more_{section_key}"), width="stretch"):
+                    st.switch_page(page_path)
             except TypeError:
-                # oudere Streamlit: geen width-arg
                 if st.button(label, key=_uniq_key(f"more_{section_key}")):
                     st.switch_page(page_path)
         else:
@@ -370,16 +373,14 @@ def render_section(
 
     # Volledige view: lijst met meer berichten + "Laad meer" (alles met thumbnails)
     st.markdown("### Meer berichten")
-    shown = st.session_state.get(f"kbm_shown_{section_key}", max(12, n))
-    shown = int(shown)
 
-    # Start na hero (en thumbs die je al liet zien)
+    shown = int(st.session_state.get(f"kbm_shown_{section_key}", max(12, n)))
+
     start = 1 + n
     more_items = items[start : start + shown]
     for i, it in enumerate(more_items):
         _list_row(it, section_key, i)
 
-    # Laad meer knop
     remaining = max(0, len(items) - (start + shown))
     if remaining > 0:
         label = f"Laad meer ({min(20, remaining)})"
