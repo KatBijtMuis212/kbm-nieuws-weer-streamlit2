@@ -99,3 +99,27 @@ def render_section(
             thumb = f"""<div class="kbm-thumb" style="background-image:url('{html.escape(img)}')"></div>"""
 
         st.markdown(
+            f"""
+<div class="kbm-item kbm-item--card">
+  {thumb}
+  <div class="kbm-item-inner">
+    <div class="kbm-item-title"><a href="/Artikel?url={html.escape(link)}">{html.escape(headline)}</a></div>
+    <div class="kbm-item-meta">{html.escape(src)} • {html.escape(dt)}</div>
+  </div>
+</div>
+""",
+            unsafe_allow_html=True,
+        )
+        with st.expander("Lees preview", expanded=False):
+            _render_preview(it)
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    if rest:
+        with st.expander("Meer berichten", expanded=False):
+            for it in rest:
+                link = it.get("link") or ""
+                st.markdown(f"- [{it.get('title','Zonder titel')}](/Artikel?url={link})")
+                st.caption(f"{host(link)} • {pretty_dt(it.get('dt'))}")
+
+    st.markdown("</div>", unsafe_allow_html=True)
