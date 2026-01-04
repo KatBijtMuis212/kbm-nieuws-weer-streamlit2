@@ -303,9 +303,9 @@ with t1:
 <div class="kbm-sky" style="width:100%;height:560px;">
   <iframe src="{rv_url}" style="width:100%;height:100%;border:0;border-radius:18px;"></iframe>
 
-  <div style="
-    position:absolute; top:16px; left:16px;
-    background:white;
+<div style="
+    position:absolute; bottom:16px; left:16px;
+    background:gold;
     padding:10px 14px;
     border-radius:14px;
     box-shadow:0 10px 28px rgba(0,0,0,.28);
