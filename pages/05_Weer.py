@@ -120,18 +120,25 @@ background-size:18px 18px;animation:snow 6s linear infinite;opacity:.55}
 
 @st.cache_data(ttl=900, show_spinner=False)
 def geocode(q: str):
-    """Geocode a place name using Open-Meteo geocoding API."""
+    """Zoek plaatsnaam → lat/lon via Open-Meteo geocoding."""
     url = "https://geocoding-api.open-meteo.com/v1/search"
-    r = requests.get(
-        url,
-        params={"name": q, "count": 5, "language": "nl", "format": "json"},
-        headers={"User-Agent": UA, "Accept": "application/json"},
-        timeout=20,
-    )
-    if r.status_code != 200:
+    try:
+        r = requests.get(
+            url,
+            params={"name": q, "count": 5, "language": "nl", "format": "json"},
+            headers={"User-Agent": UA},
+            timeout=20,
+        )
+        if r.status_code != 200:
+            return []
+        data = r.json() if r.text else {}
+        if not isinstance(data, dict):
+            return []
+        return data.get("results", []) or []
+    except Exception:
         return []
-    data = r.json() if r.text else {}
-    return data.get("results", []) or []
+
+
 @st.cache_data(ttl=600, show_spinner=False)
 def forecast(lat: float, lon: float):
     url = "https://api.open-meteo.com/v1/forecast"
