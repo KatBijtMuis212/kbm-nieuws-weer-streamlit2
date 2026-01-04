@@ -110,8 +110,8 @@ def _get_items_for_section(
     items = collect_items(feeds, query=query, max_items=max_items)  # verwacht list[dict]
     items = _flatten(items)
 
-    # Optionele uren-filter (bijv. Net binnen)
-    if hours_limit and hours_limit > 0:
+    # Optionele uren-filter: alleen toepassen voor 'Net binnen' (home/compact gebruikt vaak dezelfde 'hrs' voor alles)
+    if hours_limit and hours_limit > 0 and title.strip().lower() in ("net binnen", "net_binnen"):
         items = [it for it in items if within_hours(it.get("dt"), hours_limit)]
 
     # Sorteer op datum (nieuwste eerst) als dt aanwezig is
