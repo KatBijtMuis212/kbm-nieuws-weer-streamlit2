@@ -332,6 +332,10 @@ def _fetch_article_text(url: str) -> str:
     """
     if not url:
         return ""
+    # DPG Media (o.a. NU.nl/AD) blokkeert server-side scraping vaak via WAF.
+    # We proberen geen WAF te omzeilen; als dit domein voorkomt, geven we een duidelijke melding terug.
+    if any(d in url.lower() for d in ["nu.nl", "ad.nl", "bd.nl", "destentor.nl", "tubantia.nl", "pzc.nl", "gelderlander.nl", "ed.nl", "bndestem.nl", "parool.nl", "trouw.nl", "volkskrant.nl", "dpgmedia"]):
+        return "__KBM_DPG_WAF__"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -471,7 +475,12 @@ def _render_article(it: Dict[str, Any], section_key: str):
     if body and isinstance(body, str) and body.strip():
         st.markdown(body, unsafe_allow_html=True)
     else:
-        st.info("Geen volledige tekst beschikbaar voor dit bericht.")
+        # DPG WAF melding
+        if isinstance(body, str) and body.strip() == "__KBM_DPG_WAF__":
+            st.warning("Deze uitgever (DPG Media, o.a. NU.nl/AD) blokkeert automatisch uitlezen via een Web Application Firewall. Daarom kan ik de volledige tekst niet in de app tonen.")
+            st.info("Gebruik **Bekijk origineel** hieronder. Voor in-app lezen: kies bronnen die wél volledige tekst leveren (bijv. NOS/omroepen) of RSS-feeds met volledige content.")
+        else:
+            st.info("Geen volledige tekst beschikbaar voor dit bericht.")
         with st.expander("Diagnose (waarom geen tekst?)"):
             st.write("Sommige sites leveren alleen een korte RSS-samenvatting of blokkeren scraping.")
             st.write({"url": link, "rss_summary_len": len((it.get("summary") or "") or ""), "scrape_attempted": True})
