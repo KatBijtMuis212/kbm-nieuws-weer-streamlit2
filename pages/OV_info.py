@@ -53,11 +53,29 @@ with tab1:
     with colB:
         town = st.text_input("Plaats (optioneel, helpt enorm)", placeholder="bijv. Huizen")
 
+    debug = st.toggle("Debug tonen", value=True)
+
     if st.button("Zoek haltes", use_container_width=True):
-        if town.strip():
-            stops = vt_find_stops_by_name_town(q, town)
-        else:
-            stops = vt_find_stops_by_name(q)
+        if not q.strip():
+            st.warning("Vul eerst een halte-naam in.")
+            st.stop()
+
+        st.info("Zoeken… even geduld (max ~12 sec).")
+
+        try:
+            if town.strip():
+                stops = vt_find_stops_by_name_town(q, town)
+            else:
+                stops = vt_find_stops_by_name(q)
+
+            if debug:
+                st.write("Aantal resultaten:", len(stops))
+                if len(stops) > 0:
+                    st.write("Voorbeeld record:", stops[0])
+
+        except Exception as e:
+            st.error(f"Zoeken faalde: {type(e).__name__}: {e}")
+            st.stop()
 
         if not stops:
             st.warning("Geen haltes gevonden. Probeer andere spelling of vul plaats in.")
@@ -67,6 +85,7 @@ with tab1:
                 stopname = s.get("StopName") or s.get("ScheduleName") or "Onbekend"
                 stown = s.get("Town") or town or "?"
                 opts.append((stown, stopname))
+
             choice = st.selectbox("Kies halte", opts, format_func=lambda x: f"{x[1]} — {x[0]}")
             if st.button("Toon vertrektijden", use_container_width=True):
                 render_departures(choice[0], choice[1])
