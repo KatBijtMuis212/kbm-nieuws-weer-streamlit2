@@ -257,6 +257,7 @@ def pretty_dt(dt: Optional[datetime]) -> str:
 def within_hours(dt: Optional[datetime], hours: int) -> bool:
     if not dt:
         return False
+    # dt is UTC in deze app; vergelijk ook in UTC
     return dt >= datetime.now(timezone.utc) - timedelta(hours=hours)
 
 def item_id(item: Dict[str, Any]) -> str:
@@ -264,26 +265,84 @@ def item_id(item: Dict[str, Any]) -> str:
     return hashlib.sha1(base).hexdigest()[:16]
 
 def _first_image_from_entry(entry: Any) -> Optional[str]:
-    try:
-        mc = entry.get("media_content") or []
-        if isinstance(mc, list) and mc and mc[0].get("url"):
-            return mc[0]["url"]
+    """
+    Best-effort image extraction for RSS/Atom entries.
 
+    Supports:
+      - media:content (media_content) as dict or list
+      - media:thumbnail (media_thumbnail) as dict or list
+      - enclosures + links/enclosures
+      - content:encoded / entry.content[0].value
+      - <img> tags inside summary/description/content (src, data-src, srcset)
+    """
+    try:
+        # 1) media_content can be dict or list
+        mc = entry.get("media_content")
+        if isinstance(mc, dict) and mc.get("url"):
+            return mc["url"]
+        if isinstance(mc, list):
+            for x in mc:
+                if isinstance(x, dict) and x.get("url"):
+                    return x["url"]
+
+        # 2) media_thumbnail
+        mt = entry.get("media_thumbnail")
+        if isinstance(mt, dict) and mt.get("url"):
+            return mt["url"]
+        if isinstance(mt, list):
+            for x in mt:
+                if isinstance(x, dict) and x.get("url"):
+                    return x["url"]
+
+        # 3) enclosures
         enc = entry.get("enclosures") or []
         for e in enc:
-            href = e.get("href")
-            if href and (e.get("type","").startswith("image") or e.get("type","")== ""):
+            if not isinstance(e, dict):
+                continue
+            href = e.get("href") or e.get("url")
+            typ = (e.get("type") or "").lower()
+            if href and (typ.startswith("image") or typ == ""):
                 return href
 
+        # 4) links (sometimes enclosures)
         links = entry.get("links") or []
         for l in links:
-            if (l.get("type","") or "").startswith("image") and l.get("href"):
-                return l["href"]
+            if not isinstance(l, dict):
+                continue
+            href = l.get("href")
+            typ = (l.get("type") or "").lower()
+            rel = (l.get("rel") or "").lower()
+            if href and (typ.startswith("image") or rel == "enclosure"):
+                return href
 
-        summ = entry.get("summary","") or ""
-        m = re.search(r'<img[^>]+src="([^"]+)"', summ)
-        if m:
-            return m.group(1)
+        def _img_from_html(html_text: str) -> Optional[str]:
+            if not html_text:
+                return None
+            # src or data-src (supports single/double quotes)
+            m = re.search(r'<img[^>]+(?:src|data-src)=["\']([^"\']+)["\']', html_text, re.I)
+            if m:
+                return m.group(1)
+            # srcset: pick first
+            m = re.search(r'srcset=["\']([^"\']+)["\']', html_text, re.I)
+            if m:
+                first = m.group(1).split(",")[0].strip().split(" ")[0].strip()
+                return first or None
+            return None
+
+        # 5) content/content:encoded
+        content = entry.get("content")
+        if isinstance(content, list) and content:
+            c0 = content[0]
+            val = c0.get("value") if isinstance(c0, dict) else ""
+            got = _img_from_html(val or "")
+            if got:
+                return got
+
+        # 6) summary/description
+        summ = entry.get("summary") or entry.get("description") or ""
+        got = _img_from_html(summ)
+        if got:
+            return got
     except Exception:
         pass
     return None
@@ -339,12 +398,22 @@ def _scrape_rtl_listing(list_url: str, max_items: int = 40) -> List[Dict[str, An
             if len(title) < 12:
                 continue
 
+            img = None
+            try:
+                imgtag = a.find("img")
+                if imgtag:
+                    img = imgtag.get("src") or imgtag.get("data-src")
+                    if not img and imgtag.get("srcset"):
+                        img = imgtag.get("srcset").split(",")[0].strip().split(" ")[0].strip()
+            except Exception:
+                img = None
+
             out.append({
                 "title": title,
                 "link": href,
                 "dt": None,
                 "rss_summary": "",
-                "img": None,
+                "img": img,
                 "source_label": "rtl_direct",
             })
             if len(out) >= max_items:
@@ -366,6 +435,9 @@ def collect_items(feed_labels: List[str], query: Optional[str]=None, max_per_fee
         if url == "RTL_DIRECT_BOULEVARD":
             items.extend(_scrape_rtl_listing("https://www.rtl.nl/boulevard", max_items=max_per_feed))
             continue
+        if url == "RTL_DIRECT_BINNENLAND":
+            items.extend(_scrape_rtl_listing("https://www.rtl.nl/nieuws/binnenland", max_items=max_per_feed))
+            continue
 
         feed = _fetch_feed(url)
         for entry in (feed.entries or [])[:max_per_feed]:
@@ -381,11 +453,17 @@ def collect_items(feed_labels: List[str], query: Optional[str]=None, max_per_fee
             except Exception:
                 dt = None
 
+            summary = (entry.get("summary") or entry.get("description") or "").strip()
+            if not summary:
+                c = entry.get("content")
+                if isinstance(c, list) and c and isinstance(c[0], dict):
+                    summary = (c[0].get("value") or "").strip()
+
             items.append({
                 "title": title,
                 "link": link,
                 "dt": dt,
-                "rss_summary": (entry.get("summary") or "").strip(),
+                "rss_summary": summary,
                 "img": _first_image_from_entry(entry),
                 "source_label": label,
             })
