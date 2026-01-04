@@ -107,7 +107,12 @@ def _get_items_for_section(
 ) -> List[Dict[str, Any]]:
     """Haal items op voor een categorie (title)."""
     feeds = CATEGORY_FEEDS.get(title, [])
-    items = collect_items(feeds, query=query, max_items=max_items)  # verwacht list[dict]
+    res = collect_items(feeds, query=query, max_items=max_items)
+    # Sommige versies van common.collect_items geven (items, stats) terug.
+    if isinstance(res, tuple) and len(res) >= 1:
+        items = res[0]
+    else:
+        items = res
     items = _flatten(items)
 
     # Optionele uren-filter: alleen toepassen voor 'Net binnen' (home/compact gebruikt vaak dezelfde 'hrs' voor alles)
