@@ -4,6 +4,14 @@ import streamlit as st
 from common import CATEGORY_FEEDS, collect_items, within_hours, host, item_id, pretty_dt
 
 
+def _pick_image(it: dict) -> str:
+    return (it.get("image") or it.get("img") or "").strip()
+
+
+def _pick_summary(it: dict) -> str:
+    return (it.get("summary") or it.get("rss_summary") or it.get("description") or "").strip()
+
+
 def _matches_query(it: dict, query: str | None) -> bool:
     if not query:
         return True
@@ -11,8 +19,7 @@ def _matches_query(it: dict, query: str | None) -> bool:
     hay = " ".join(
         [
             str(it.get("title") or ""),
-            str(it.get("summary") or ""),
-            str(it.get("description") or ""),
+            str(_pick_summary(it) or ""),
             str(it.get("link") or ""),
         ]
     ).lower()
@@ -33,7 +40,7 @@ def _render_preview(it: dict) -> None:
     link = it.get("link") or ""
     src = host(link)
     dt = pretty_dt(it.get("dt"))
-    img = it.get("image") or ""
+    img = _pick_image(it)
 
     st.markdown(f"**{title}**")
     st.caption(f"{src} • {dt}")
@@ -44,9 +51,11 @@ def _render_preview(it: dict) -> None:
         except Exception:
             pass
 
-    summary = it.get("summary") or it.get("description") or ""
+    summary = _pick_summary(it)
     if summary:
         st.markdown(html.unescape(summary), unsafe_allow_html=True)
+    else:
+        st.caption("Geen previewtekst gevonden in deze feed.")
 
     cols = st.columns([1, 1, 1], gap="small")
     with cols[0]:
@@ -62,23 +71,15 @@ def _render_preview(it: dict) -> None:
 
 
 def _safe_collect_items(feeds: list[str], query: str | None, max_items: int):
-    """
-    common.collect_items() in jouw repo returnt: (items, stats)
-    Sommige oudere varianten returnen alleen items.
-    Deze helper vangt beide af.
-    """
-    out = collect_items(feeds, query=query, max_items=max_items)
-    if isinstance(out, tuple) and len(out) >= 1:
+    out = collect_items(feeds, query=query, max_per_feed=25, max_items=max_items)
+    if isinstance(out, tuple):
         items = out[0]
         stats = out[1] if len(out) > 1 else {}
     else:
         items = out
         stats = {}
-
     if not isinstance(items, list):
         items = []
-
-    # filter: alleen dicts
     items = [x for x in items if isinstance(x, dict)]
     return items, stats
 
@@ -96,10 +97,9 @@ def render_section(
 
     items, _stats = _safe_collect_items(feeds, query=query, max_items=max_items)
 
-    # tijdfilter (dt kan None zijn, within_hours vangt dat al af)
     items = [x for x in items if within_hours(x.get("dt"), hours_limit)]
-    # queryfilter extra (voor zekerheid)
     items = [x for x in items if _matches_query(x, query)]
+    items = items[: max(0, int(max_items))]
 
     st.markdown('<div class="kbm-card">', unsafe_allow_html=True)
     st.markdown(f"### {title}")
@@ -115,8 +115,8 @@ def render_section(
     st.markdown('<div class="kbm-grid">', unsafe_allow_html=True)
 
     for it in top:
-        link = it.get("link") or ""
-        img = it.get("image") or ""
+        link = (it.get("link") or "").strip()
+        img = _pick_image(it)
         src = host(link)
         dt_txt = pretty_dt(it.get("dt"))
         headline = it.get("title") or "Zonder titel"
@@ -146,7 +146,7 @@ def render_section(
     if rest:
         with st.expander("Meer berichten", expanded=False):
             for it in rest:
-                link = it.get("link") or ""
+                link = (it.get("link") or "").strip()
                 st.markdown(f"- [{it.get('title','Zonder titel')}](/Artikel?url={link})")
                 st.caption(f"{host(link)} • {pretty_dt(it.get('dt'))}")
 
