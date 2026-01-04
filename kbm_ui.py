@@ -201,7 +201,7 @@ def _page_path_for_section(title: str) -> str:
 
 # ---------- UI blocks ----------
 
-def _hero_card(it: Dict[str, Any], section_key: str):
+def _hero_card(it: Dict[str, Any], section_key: str, origin: str):
     img = _img_or_placeholder(it)
     title = _get_title(it)
     link = _get_link(it)
@@ -209,7 +209,7 @@ def _hero_card(it: Dict[str, Any], section_key: str):
     oid = item_id(it)
 
     # HERO moet altijd titel/meta overlay hebben, zoals jij wil
-    href = f"?section={section_key}&open={oid}"
+    href = f"?section={section_key}&open={oid}&from={origin}"
 
     st.markdown(
         f"""
@@ -250,13 +250,13 @@ def _hero_card(it: Dict[str, Any], section_key: str):
     )
 
 
-def _thumb_row(it: Dict[str, Any], section_key: str):
+def _thumb_row(it: Dict[str, Any], section_key: str, origin: str):
     img = _img_or_placeholder(it)
     title = _get_title(it)
     link = _get_link(it)
     meta = f"{host(link)} • {pretty_dt(_get_dt(it))}".strip(" •")
     oid = item_id(it)
-    href = f"?section={section_key}&open={oid}"
+    href = f"?section={section_key}&open={oid}&from={origin}"
 
     img_html = (
         f'<img src="{img}" '
@@ -287,13 +287,13 @@ def _thumb_row(it: Dict[str, Any], section_key: str):
     )
 
 
-def _list_row(it: Dict[str, Any], section_key: str):
+def _list_row(it: Dict[str, Any], section_key: str, origin: str):
     img = _img_or_placeholder(it)
     title = _get_title(it)
     link = _get_link(it)
     meta = f"{host(link)} • {pretty_dt(_get_dt(it))}".strip(" •")
     oid = item_id(it)
-    href = f"?section={section_key}&open={oid}"
+    href = f"?section={section_key}&open={oid}&from={origin}"
 
     img_html = (
         f'<img src="{img}" '
@@ -427,12 +427,15 @@ def _render_article(it: Dict[str, Any], section_key: str):
     # Als RSS geen volledige tekst geeft: probeer live te scrapen.
     if (not body) or (isinstance(body, str) and len(body.strip()) < 200):
         scraped = _fetch_article_text(link)
-        if scraped and len(scraped) > 200:
+        if scraped and len(scraped.strip()) > 0:
             body = scraped
-    if body:
+    if body and isinstance(body, str) and body.strip():
         st.markdown(body, unsafe_allow_html=True)
     else:
         st.info("Geen volledige tekst beschikbaar voor dit bericht.")
+        with st.expander("Diagnose (waarom geen tekst?)"):
+            st.write("Sommige sites leveren alleen een korte RSS-samenvatting of blokkeren scraping.")
+            st.write({"url": link, "rss_summary_len": len((it.get("summary") or "") or ""), "scrape_attempted": True})
 
     if link:
         try:
@@ -450,6 +453,7 @@ def render_section(
     view: str = "full",
 ):
     section_key = re.sub(r"[^a-z0-9]+", "_", title.lower()).strip("_") or "section"
+    origin = "home" if view in ("home","compact") else section_key
 
     # Query params: open item in-app
     try:
@@ -460,9 +464,11 @@ def render_section(
     if isinstance(qp, dict):
         qp_section = _safe_str(qp.get("section", ""))
         qp_open = _safe_str(qp.get("open", ""))
+        qp_from = _safe_str(qp.get("from", ""))
     else:
         qp_section = _safe_str(qp.get("section"))
         qp_open = _safe_str(qp.get("open"))
+        qp_from = _safe_str(qp.get("from"))
 
     items = _get_items_for_section(title, hours_limit=hours_limit, query=query, max_items=max_items)
 
@@ -475,11 +481,20 @@ def render_section(
                 break
         if hit:
             if st.button("← Terug", key=_uniq_key(f"back_{section_key}")):
+                # Probeer terug te navigeren naar waar je vandaan kwam.
                 try:
                     st.query_params.clear()
                 except Exception:
                     pass
-                st.experimental_rerun()
+                # Sommige deployments blijven "hangen" op dezelfde view; daarom een fallback.
+                try:
+                    if (qp_from or "").lower() == "home":
+                        st.switch_page("app.py")
+                    else:
+                        # als we op een categoriepagina zitten, herteken gewoon de lijst
+                        st.experimental_rerun()
+                except Exception:
+                    st.experimental_rerun()
             _render_article(hit, section_key)
             return
 
@@ -493,11 +508,11 @@ def render_section(
     hero = items[0]
     rest = items[1:]
 
-    _hero_card(hero, section_key)
+    _hero_card(hero, section_key, origin)
 
     n = max(0, int(thumbs_n or 0))
     for it in rest[:n]:
-        _thumb_row(it, section_key)
+        _thumb_row(it, section_key, origin)
 
     # Home/compact: knop "Meer <categorie>" en klaar
     if view in ("home", "compact"):
@@ -521,7 +536,7 @@ def render_section(
     start = 1 + n
     more_items = items[start : start + shown]
     for it in more_items:
-        _list_row(it, section_key)
+        _list_row(it, section_key, origin)
 
     remaining = max(0, len(items) - (start + shown))
     if remaining > 0:
