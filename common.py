@@ -210,25 +210,19 @@ FEEDS: Dict[str, str] = {
     "rtl_nieuws": "RTL_DIRECT_NEWS",
     "rtl_boulevard": "RTL_DIRECT_BOULEVARD",
     "rtl_binnenland": "RTL_DIRECT_BINNENLAND",
-    "rtl_buitenland": "RTL_DIRECT_BUITENLAND",
-    "rtl_economie": "RTL_DIRECT_ECONOMIE",
-    "rtl_sport": "RTL_DIRECT_SPORT",
-    "rtl_tech": "RTL_DIRECT_TECH",
-    "rtl_royalty": "RTL_DIRECT_ROYALTY",
-    "rtl_show": "RTL_DIRECT_SHOW",
 }
 
 CATEGORY_FEEDS: Dict[str, List[str]] = {
     "Net binnen": ["nos_binnenland", "nu_algemeen", "rtvmh", "west_algemeen", "nh_gooi", "rtl_nieuws"],
 
-    "Binnenland": ["nos_binnenland","nos_politiek","nd_binnenland","rtl_binnenland"],
-    "Buitenland": ["nos_buitenland","nd_buitenland","rtl_buitenland"],
-    "Show": ["rtl_boulevard","rtl_show","nu_entertainment","ad_show","ad_sterren"],
+    "Binnenland": ["nos_binnenland", "nu_algemeen", "ad_home", "vk_voorpagina", "trouw_voorpagina", "nd_binnenland", "rtl_nieuws"],
+    "Buitenland": ["nos_buitenland", "vk_achtergrond", "nd_buitenland", "nrc_main", "rtl_nieuws"],
+    "Show": ["nu_entertainment", "nu_achterklap", "ad_sterren", "ad_show", "ad_showbytes", "rtl_boulevard"],
     "Lokaal": ["rtvmh", "west_bodegraven", "west_gouda", "west_alphen"],
     "Sport": ["nos_sport", "nos_f1", "nu_sport", "west_sport", "nrc_sport", "trouw_sport", "rtl_nieuws"],
-    "Tech": ["nos_tech","rtl_tech","ict_computable","ict_pcmweb"],
+    "Tech": ["nos_tech", "nu_tech", "ict_pcmweb", "ict_computable"],
     "Opmerkelijk": ["nos_opmerkelijk", "nu_opmerkelijk", "nu_goed", "ad_bizar", "trouw_cartoons"],
-    "Economie": ["nos_economie","nd_economie","rtl_economie"],
+    "Economie": ["nos_economie", "nu_economie", "ad_geld", "west_economie", "vk_economie", "nrc_economie", "trouw_duurzaamheid", "nd_economie", "rtl_nieuws"],
 
     "Regionaal": [
         "west_algemeen", "west_opsporing", "west_denhaag", "west_delft", "west_leiden", "west_westland",
@@ -345,30 +339,12 @@ def _scrape_rtl_listing(list_url: str, max_items: int = 40) -> List[Dict[str, An
             if len(title) < 12:
                 continue
 
-            # try to grab a thumbnail from the listing (img tag or inline background-image)
-            img_url = None
-            img_tag = a.find("img")
-            if img_tag:
-                img_url = img_tag.get("src") or img_tag.get("data-src") or img_tag.get("data-lazy-src")
-            if not img_url:
-                # sometimes the image is on a wrapping element as background-image
-                cand = a
-                for _ in range(3):
-                    style = (cand.get("style") or "").strip()
-                    m = re.search(r"background-image:\s*url\(['\"]?(.*?)['\"]?\)", style, flags=re.I)
-                    if m:
-                        img_url = m.group(1)
-                        break
-                    cand = cand.parent if getattr(cand, "parent", None) else cand
-            if img_url and img_url.startswith("/"):
-                img_url = urljoin("https://www.rtl.nl", img_url)
-
             out.append({
                 "title": title,
                 "link": href,
                 "dt": None,
                 "rss_summary": "",
-                "img": img_url,
+                "img": None,
                 "source_label": "rtl_direct",
             })
             if len(out) >= max_items:
@@ -389,28 +365,6 @@ def collect_items(feed_labels: List[str], query: Optional[str]=None, max_per_fee
             continue
         if url == "RTL_DIRECT_BOULEVARD":
             items.extend(_scrape_rtl_listing("https://www.rtl.nl/boulevard", max_items=max_per_feed))
-            continue
-
-        if url == "RTL_DIRECT_BINNENLAND":
-            items.extend(_scrape_rtl_listing("https://www.rtl.nl/nieuws/binnenland", max_items=max_per_feed))
-            continue
-        if url == "RTL_DIRECT_BUITENLAND":
-            items.extend(_scrape_rtl_listing("https://www.rtl.nl/nieuws/buitenland", max_items=max_per_feed))
-            continue
-        if url == "RTL_DIRECT_ECONOMIE":
-            items.extend(_scrape_rtl_listing("https://www.rtl.nl/nieuws/economie", max_items=max_per_feed))
-            continue
-        if url == "RTL_DIRECT_SPORT":
-            items.extend(_scrape_rtl_listing("https://www.rtl.nl/sport", max_items=max_per_feed))
-            continue
-        if url == "RTL_DIRECT_TECH":
-            items.extend(_scrape_rtl_listing("https://www.rtl.nl/nieuws/tech", max_items=max_per_feed))
-            continue
-        if url == "RTL_DIRECT_ROYALTY":
-            items.extend(_scrape_rtl_listing("https://www.rtl.nl/nieuws/koningshuis", max_items=max_per_feed))
-            continue
-        if url == "RTL_DIRECT_SHOW":
-            items.extend(_scrape_rtl_listing("https://www.rtl.nl/boulevard/entertainment", max_items=max_per_feed))
             continue
 
         feed = _fetch_feed(url)
@@ -553,9 +507,3 @@ def openai_summarize(model: str, api_key: str, prompt: str) -> str:
         return "\n\n".join(out_parts).strip()
     except Exception:
         return ""
-
-
-# --- Backwards compatibility helper (used by older UI code) ---
-
-def pre(text: str) -> str:
-    return text
