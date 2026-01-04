@@ -55,11 +55,11 @@ def _ensure_css_once():
         """
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;800&display=swap');
-
-html, body, [class*="css"], .stApp {
+html, body, [class*="css"], .stApp{
   font-family: "Montserrat", system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif !important;
 }
 
+/* --- KBM Block layout (Hero + 4 rows) --- */
 .kbm-block{
   margin: 0 0 26px 0;
   background: #0b0f14;
@@ -71,7 +71,7 @@ html, body, [class*="css"], .stApp {
 
 .kbm-block__title{
   font-size: 42px;
-  font-weight: 800; /* sectietitel mag lekker dik */
+  font-weight: 800;
   letter-spacing: .5px;
   text-transform: uppercase;
   color: #ffffff;
@@ -113,7 +113,7 @@ html, body, [class*="css"], .stApp {
   margin-top: 6px;
   color: rgba(255,255,255,.84);
   font-size: 14px;
-  font-weight: 400; /* Regular */
+  font-weight: 400;
   text-shadow: 0 2px 10px rgba(0,0,0,.75);
 }
 
@@ -160,7 +160,7 @@ html, body, [class*="css"], .stApp {
   line-height: 1.18;
   text-shadow: 0 1px 8px rgba(0,0,0,.55);
   display: -webkit-box;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 2;  /* max 2 regels */
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
@@ -170,6 +170,18 @@ html, body, [class*="css"], .stApp {
   color: rgba(255,255,255,.78);
   font-size: 13px;
   font-weight: 400;
+}
+
+.kbm-badge{
+  display:inline-block;
+  margin-left:10px;
+  padding:3px 8px;
+  border-radius:999px;
+  font-size:12px;
+  font-weight:800;
+  background:#214c6e;
+  color:#fff;
+  vertical-align:middle;
 }
 </style>
         """,
@@ -254,13 +266,12 @@ def render_section(
     hero_title = hero.get("title") or "Zonder titel"
     hero_link = hero.get("link") or ""
     hero_meta = f"{host(hero_link)} • {pretty_dt(hero.get('dt'))}"
+    hero_badge = " <span class='kbm-badge'>VIDEO</span>" if "/video/" in (hero_link or "") else ""
 
-    # Thumbs = volgende 4 (of minder)
     thumbs_n = max(0, int(thumbs_n))
     thumbs = items[:thumbs_n]
     rest = items[thumbs_n:]
 
-    # ---------- BLOCK HTML ----------
     st.markdown('<div class="kbm-block">', unsafe_allow_html=True)
     st.markdown(f'<div class="kbm-block__title">{html.escape(title)}</div>', unsafe_allow_html=True)
 
@@ -272,7 +283,7 @@ def render_section(
 <div class="kbm-hero" style="{hero_style}">
   <div class="kbm-hero__shade"></div>
   <div class="kbm-hero__bar">
-    <div class="kbm-hero__title">{_card_link(hero_title, hero_link)}</div>
+    <div class="kbm-hero__title">{_card_link(hero_title, hero_link)}{hero_badge}</div>
     <div class="kbm-hero__meta">{html.escape(hero_meta)}</div>
   </div>
 </div>
@@ -280,15 +291,14 @@ def render_section(
         unsafe_allow_html=True,
     )
 
-    # Thumb rows
     st.markdown('<div class="kbm-list">', unsafe_allow_html=True)
 
-    # Als thumbnail geen image heeft: gewoon leeg blok (zoals je wireframe)
     for idx, it in enumerate(thumbs):
         t = it.get("title") or "Zonder titel"
         link = it.get("link") or ""
         meta = f"{host(link)} • {pretty_dt(it.get('dt'))}"
         img = _pick_image(it)
+        badge = " <span class='kbm-badge'>VIDEO</span>" if "/video/" in (link or "") else ""
 
         thumb_html = (
             f"<div class='kbm-thumb'><img src='{html.escape(img)}' loading='lazy' /></div>"
@@ -301,7 +311,7 @@ def render_section(
 <div class="kbm-row">
   {thumb_html}
   <div class="kbm-row__body">
-    <div class="kbm-row__title">{_card_link(t, link)}</div>
+    <div class="kbm-row__title">{_card_link(t, link)}{badge}</div>
     <div class="kbm-row__meta">{html.escape(meta)}</div>
   </div>
 </div>
@@ -309,16 +319,16 @@ def render_section(
             unsafe_allow_html=True,
         )
 
-        # Preview onder elke row (expander)
-        with st.container():
-            st.markdown('<div class="kbm-expander-fix">', unsafe_allow_html=True)
-            with st.expander("Lees preview", expanded=False):
-                _render_preview(it, section_key, idx)
-            st.markdown("</div>", unsafe_allow_html=True)
-
     st.markdown("</div>", unsafe_allow_html=True)  # kbm-list
+    st.markdown("</div>", unsafe_allow_html=True)  # kbm-block
 
-    # Meer berichten (optioneel)
+    # 1 expander voor previews (breekt niet je donkere kaart)
+    if thumbs:
+        with st.expander("Lees previews (top 4)", expanded=False):
+            for i, it in enumerate(thumbs):
+                st.markdown("---")
+                _render_preview(it, section_key, i)
+
     if rest:
         with st.expander("Meer berichten", expanded=False):
             for i, it in enumerate(rest):
@@ -326,5 +336,3 @@ def render_section(
                 t = it.get("title") or "Zonder titel"
                 st.markdown(f"- [{t}](/Artikel?url={link})")
                 st.caption(f"{host(link)} • {pretty_dt(it.get('dt'))}")
-
-    st.markdown("</div>", unsafe_allow_html=True)  # kbm-block
