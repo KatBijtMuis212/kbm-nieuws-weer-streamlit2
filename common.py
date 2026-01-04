@@ -122,6 +122,7 @@ FEEDS: Dict[str, str] = {
 
     # AD algemeen + extra
     "ad_home": "https://www.ad.nl/home/rss.xml",
+    "ad_home...voorpagina": "https://www.ad.nl/home/rss.xml",  # alias (oude sleutel, behouden)
     "ad_geld": "https://www.ad.nl/geld/rss.xml",
     "ad_sterren": "https://www.ad.nl/sterren/rss.xml",
     "ad_film": "https://www.ad.nl/film/rss.xml",
@@ -215,7 +216,7 @@ FEEDS: Dict[str, str] = {
 CATEGORY_FEEDS: Dict[str, List[str]] = {
     "Net binnen": ["nos_binnenland", "nu_algemeen", "rtvmh", "west_algemeen", "nh_gooi", "rtl_nieuws"],
 
-    "Binnenland": ["nos_binnenland", "nd_binnenland", "ad_home...voorpagina", "trouw_voorpagina"],
+    "Binnenland": ["nos_binnenland", "nd_binnenland", "ad_home", "trouw_voorpagina"],
     "Buitenland": ["nos_buitenland", "nd_buitenland", "nrc_main", "vk_achtergrond"],
     "Show": ["nu_entertainment", "nu_achterklap", "ad_sterren", "ad_show", "ad_showbytes", "rtl_boulevard"],
     "Lokaal": ["rtvmh", "west_bodegraven", "west_gouda", "west_alphen"],
