@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import os
-import json
 import hashlib
 import re
 import time
@@ -16,6 +15,15 @@ import streamlit as st
 from bs4 import BeautifulSoup
 
 
+
+# Small formatting helper (backwards compatibility)
+def pre(x: object) -> str:
+    """Pretty string for debugging/logging."""
+    try:
+        import pprint
+        return pprint.pformat(x, width=100, compact=True)
+    except Exception:
+        return str(x)
 # ============================================================
 # --- OV / Vertrektijd.info helpers ---
 # ============================================================
@@ -211,25 +219,19 @@ FEEDS: Dict[str, str] = {
     "rtl_nieuws": "RTL_DIRECT_NEWS",
     "rtl_boulevard": "RTL_DIRECT_BOULEVARD",
     "rtl_binnenland": "RTL_DIRECT_BINNENLAND",
-    "rtl_buitenland": "RTL_DIRECT_BUITENLAND",
-    "rtl_economie": "RTL_DIRECT_ECONOMIE",
-    "rtl_sport": "RTL_DIRECT_SPORT",
-    "rtl_tech": "RTL_DIRECT_TECH",
-    "rtl_royalty": "RTL_DIRECT_ROYALTY",
 }
 
 CATEGORY_FEEDS: Dict[str, List[str]] = {
     "Net binnen": ["nos_binnenland", "nu_algemeen", "rtvmh", "west_algemeen", "nh_gooi", "rtl_nieuws"],
 
-    "Binnenland": ["nos_binnenland", "nu_algemeen", "ad_home", "vk_voorpagina", "trouw_voorpagina", "nd_binnenland", "rtl_nieuws", "rtl_binnenland"],
-    "Buitenland": ["nos_buitenland", "vk_achtergrond", "nd_buitenland", "nrc_main", "rtl_nieuws", "rtl_buitenland"],
+    "Binnenland": ["nos_binnenland", "nu_algemeen", "ad_home", "vk_voorpagina", "trouw_voorpagina", "nd_binnenland", "rtl_nieuws"],
+    "Buitenland": ["nos_buitenland", "vk_achtergrond", "nd_buitenland", "nrc_main", "rtl_buitenland"],
     "Show": ["nu_entertainment", "nu_achterklap", "ad_sterren", "ad_show", "ad_showbytes", "rtl_boulevard"],
-"Royalty": ["nos_koningshuis", "ad_royalty", "nu_achterklap", "rtl_royalty"],
     "Lokaal": ["rtvmh", "west_bodegraven", "west_gouda", "west_alphen"],
-    "Sport": ["nos_sport", "nos_f1", "nu_sport", "west_sport", "nrc_sport", "trouw_sport", "rtl_nieuws", "rtl_sport"],
-    "Tech": ["nos_tech", "nu_tech", "ict_pcmweb", "ict_computable", "rtl_tech"],
+    "Sport": ["nos_sport", "nos_f1", "nu_sport", "west_sport", "nrc_sport", "trouw_sport", "rtl_nieuws"],
+    "Tech": ["nos_tech", "nu_tech", "ict_pcmweb", "ict_computable"],
     "Opmerkelijk": ["nos_opmerkelijk", "nu_opmerkelijk", "nu_goed", "ad_bizar", "trouw_cartoons"],
-    "Economie": ["nos_economie", "nu_economie", "ad_geld", "west_economie", "vk_economie", "nrc_economie", "trouw_duurzaamheid", "nd_economie", "rtl_nieuws", "rtl_economie"],
+    "Economie": ["nos_economie", "nu_economie", "ad_geld", "west_economie", "vk_economie", "nrc_economie", "trouw_duurzaamheid", "nd_economie", "rtl_nieuws"],
 
     "Regionaal": [
         "west_algemeen", "west_opsporing", "west_denhaag", "west_delft", "west_leiden", "west_westland",
@@ -247,11 +249,6 @@ CATEGORY_FEEDS: Dict[str, List[str]] = {
 
     "RTL Nieuws": ["rtl_nieuws"],
     "RTL Binnenland": ["rtl_binnenland"],
-    "RTL Buitenland": ["rtl_buitenland"],
-    "RTL Economie": ["rtl_economie"],
-    "RTL Sport": ["rtl_sport"],
-    "RTL Tech": ["rtl_tech"],
-    "RTL Royalty": ["rtl_royalty"],
     "RTL Boulevard": ["rtl_boulevard"],
 }
 
@@ -266,10 +263,20 @@ def pretty_dt(dt: Optional[datetime]) -> str:
         return ""
     return dt.astimezone().strftime("%d-%m %H:%M")
 
+
+def collect_items_for_category(category: str, query: str = "", max_items: int = 80) -> List[Dict[str, Any]]:
+    """Collect items using CATEGORY_FEEDS[category], and apply Binnenland/Buitenland heuristics."""
+    keys = CATEGORY_FEEDS.get(category, [])
+    items = collect_items(keys, query=query, max_items=max_items)
+    if category.lower() == "binnenland":
+        items = [it for it in items if not is_buitenland_item(it)]
+    if category.lower() == "buitenland":
+        items = [it for it in items if is_buitenland_item(it)]
+    return items
+
 def within_hours(dt: Optional[datetime], hours: int) -> bool:
-    # Sommige feeds (o.a. Feedburner) leveren geen goede datum; dan willen we items niet weggooien.
     if not dt:
-        return True
+        return False
     return dt >= datetime.now(timezone.utc) - timedelta(hours=hours)
 
 def item_id(item: Dict[str, Any]) -> str:
@@ -301,6 +308,30 @@ def _first_image_from_entry(entry: Any) -> Optional[str]:
         pass
     return None
 
+
+# --- Category heuristics (Binnenland vs Buitenland) ---
+_BUITENLAND_PATH_MARKERS = (
+    "/buitenland/", "/foreign/", "/wereld/", "/world/", "/internationaal/",
+    "/eu/", "/europa/", "/amerika/", "/azie/", "/afrika/", "/oostenrijk/", "/duitsland/",
+)
+_BUITENLAND_TITLE_MARKERS = (
+    "griekenland", "curaçao", "brussel", "brussels", "iran", "israel", "gaza", "oekraïne",
+    "ukraine", "rusland", "amerika", "vs", "verenigde staten", "duitsland", "frankrijk",
+    "spanje", "italië", "finland", "zweden", "noorwegen", "polen", "hongarije", "turkije",
+)
+
+def is_buitenland_item(it: Dict[str, Any]) -> bool:
+    link = (it.get("link") or it.get("url") or "").lower()
+    title = (it.get("title") or "").lower()
+    if any(m in link for m in _BUITENLAND_PATH_MARKERS):
+        return True
+    if any(m in title for m in _BUITENLAND_TITLE_MARKERS):
+        return True
+    # NOS has explicit feed ids; trust those if provided
+    src = (it.get("source") or "").lower()
+    if "nos.nl" in src and ("buitenland" in src):
+        return True
+    return False
 def _fetch_feed(url: str):
     now = time.time()
     cached = _FEED_CACHE.get(url)
@@ -325,7 +356,6 @@ def _abs(href: str) -> str:
     return href
 
 def _scrape_rtl_listing(list_url: str, max_items: int = 40) -> List[Dict[str, Any]]:
-    """Scrape RTL listing pages for (title, link, optional image). Best-effort."""
     out: List[Dict[str, Any]] = []
     try:
         r = requests.get(list_url, headers=HEADERS, timeout=15)
@@ -334,33 +364,15 @@ def _scrape_rtl_listing(list_url: str, max_items: int = 40) -> List[Dict[str, An
         soup = BeautifulSoup(r.text or "", "lxml")
 
         anchors = soup.find_all("a", href=True)
-        seen: set[str] = set()
-
-        def pick_img(tag) -> Optional[str]:
-            if not tag:
-                return None
-            img_tag = tag.find("img")
-            if not img_tag and tag.parent:
-                img_tag = tag.parent.find("img")
-            if not img_tag and tag.parent and tag.parent.parent:
-                img_tag = tag.parent.parent.find("img")
-            if not img_tag:
-                return None
-            img = (img_tag.get("src") or img_tag.get("data-src") or "").strip()
-            if not img:
-                srcset = (img_tag.get("srcset") or "").strip()
-                if srcset:
-                    img = srcset.split(",")[0].strip().split(" ")[0]
-            return _abs(img) if img else None
-
+        seen = set()
         for a in anchors:
-            href = _abs(a.get("href", ""))
+            href = _abs(a.get("href",""))
             if href.startswith("/"):
                 href = urljoin("https://www.rtl.nl", href)
 
             if "rtl.nl" not in href:
                 continue
-            if ("/nieuws/" not in href) and ("/boulevard/" not in href) and ("/sport/" not in href):
+            if "/nieuws/" not in href and "/boulevard/" not in href:
                 continue
             if href in seen:
                 continue
@@ -376,7 +388,7 @@ def _scrape_rtl_listing(list_url: str, max_items: int = 40) -> List[Dict[str, An
                 "link": href,
                 "dt": None,
                 "rss_summary": "",
-                "img": pick_img(a),
+                "img": None,
                 "source_label": "rtl_direct",
             })
             if len(out) >= max_items:
@@ -385,26 +397,6 @@ def _scrape_rtl_listing(list_url: str, max_items: int = 40) -> List[Dict[str, An
         return out
     return out
 
-def _google_news_rss_site(site: str, extra_query: str = "", max_items: int = 40) -> List[Dict[str, Any]]:
-    # Fallback voor sites die (deels) JS-driven zijn, zoals RTL.
-    # We wijzigen GEEN vaste feeds; dit wordt alleen gebruikt als directe scrape leeg is.
-    q = f"site:{site} {extra_query}".strip()
-    rss = "https://news.google.com/rss/search?q=" + quote(q) + "&hl=nl&gl=NL&ceid=NL:nl"
-    feed = _fetch_feed(rss)
-    out: List[Dict[str, Any]] = []
-    for entry in (feed.entries or [])[:max_items]:
-        title = (entry.get("title") or "").strip()
-        link = (entry.get("link") or "").strip()
-        dt = _parse_dt(entry)
-        out.append({
-            "title": title,
-            "link": link,
-            "dt": dt,
-            "summary": (entry.get("summary") or "").strip(),
-            "img": _first_image_from_entry(entry),
-            "source_label": "google_news_rss",
-        })
-    return out
 def collect_items(feed_labels: List[str], query: Optional[str]=None, max_per_feed: int=25, **_ignored) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     items: List[Dict[str, Any]] = []
     for label in feed_labels:
@@ -413,53 +405,10 @@ def collect_items(feed_labels: List[str], query: Optional[str]=None, max_per_fee
             continue
 
         if url == "RTL_DIRECT_NEWS":
-            got = _scrape_rtl_listing("https://www.rtl.nl/nieuws", max_items=max_per_feed)
-            if not got:
-                got = _google_news_rss_site("rtl.nl", extra_query="nieuws", max_items=max_per_feed)
-            items.extend(got)
+            items.extend(_scrape_rtl_listing("https://www.rtl.nl/nieuws", max_items=max_per_feed))
             continue
         if url == "RTL_DIRECT_BOULEVARD":
-            got = _scrape_rtl_listing("https://www.rtl.nl/boulevard", max_items=max_per_feed)
-            if not got:
-                got = _google_news_rss_site("rtl.nl", extra_query="boulevard", max_items=max_per_feed)
-            items.extend(got)
-            continue
-
-        if url == "RTL_DIRECT_BINNENLAND":
-            got = _scrape_rtl_listing("https://www.rtl.nl/nieuws/binnenland", max_items=max_per_feed)
-            if not got:
-                got = _google_news_rss_site("rtl.nl", extra_query="nieuws binnenland", max_items=max_per_feed)
-            items.extend(got)
-            continue
-        if url == "RTL_DIRECT_BUITENLAND":
-            got = _scrape_rtl_listing("https://www.rtl.nl/nieuws/buitenland", max_items=max_per_feed)
-            if not got:
-                got = _google_news_rss_site("rtl.nl", extra_query="nieuws buitenland", max_items=max_per_feed)
-            items.extend(got)
-            continue
-        if url == "RTL_DIRECT_ECONOMIE":
-            got = _scrape_rtl_listing("https://www.rtl.nl/nieuws/economie", max_items=max_per_feed)
-            if not got:
-                got = _google_news_rss_site("rtl.nl", extra_query="nieuws economie", max_items=max_per_feed)
-            items.extend(got)
-            continue
-        if url == "RTL_DIRECT_SPORT":
-            got = _scrape_rtl_listing("https://www.rtl.nl/sport", max_items=max_per_feed)
-            if not got:
-                got = _google_news_rss_site("rtl.nl", extra_query="sport", max_items=max_per_feed)
-            items.extend(got)
-            continue
-        if url == "RTL_DIRECT_TECH":
-            got = _scrape_rtl_listing("https://www.rtl.nl/nieuws/tech", max_items=max_per_feed)
-            if not got:
-                got = _google_news_rss_site("rtl.nl", extra_query="tech", max_items=max_per_feed)
-            items.extend(got)
-            continue
-        if url == "RTL_DIRECT_ROYALTY":
-            got = _scrape_rtl_listing("https://www.rtl.nl/boulevard/royalty", max_items=max_per_feed)
-            if not got:
-                got = _google_news_rss_site("rtl.nl", extra_query="royalty", max_items=max_per_feed)
-            items.extend(got)
+            items.extend(_scrape_rtl_listing("https://www.rtl.nl/boulevard", max_items=max_per_feed))
             continue
 
         feed = _fetch_feed(url)
@@ -496,7 +445,12 @@ def _clean_text(s: str) -> str:
     return re.sub(r"\s+", " ", (s or "")).strip()
 
 def fetch_readable_text(url: str) -> Tuple[str, str]:
-    def _extract_from_soup(soup: BeautifulSoup) -> Tuple[str, str]:
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=15)
+        if not r.ok:
+            return "", ""
+        soup = BeautifulSoup(r.text or "", "lxml")
+
         title = ""
         h1 = soup.select_one("h1")
         if h1:
@@ -504,63 +458,6 @@ def fetch_readable_text(url: str) -> Tuple[str, str]:
         if not title and soup.title and soup.title.string:
             title = _clean_text(soup.title.string)
 
-        # 1) JSON-LD articleBody
-        try:
-            for s in soup.find_all("script", attrs={"type": "application/ld+json"}):
-                txt = (s.string or "").strip()
-                if not txt:
-                    continue
-                data = json.loads(txt)
-                bodies = []
-
-                def walk(obj):
-                    if isinstance(obj, dict):
-                        t = obj.get("@type")
-                        if isinstance(t, list):
-                            is_article = any(x in ("NewsArticle","Article","ReportageNewsArticle") for x in t)
-                        else:
-                            is_article = t in ("NewsArticle","Article","ReportageNewsArticle")
-                        if is_article:
-                            ab = obj.get("articleBody")
-                            if isinstance(ab, str) and len(ab.strip()) > 120:
-                                bodies.append(ab.strip())
-                        for v in obj.values():
-                            walk(v)
-                    elif isinstance(obj, list):
-                        for v in obj:
-                            walk(v)
-
-                walk(data)
-                if bodies:
-                    return title, "\n\n".join(bodies).strip()
-        except Exception:
-            pass
-
-        # 2) __NEXT_DATA__ (Next.js)
-        try:
-            nd = soup.find("script", id="__NEXT_DATA__")
-            if nd and (nd.string or "").strip():
-                data = json.loads(nd.string)
-                blobs = []
-
-                def walk(obj):
-                    if isinstance(obj, dict):
-                        for k, v in obj.items():
-                            if k in ("text","body","articleBody","content","contentText") and isinstance(v, str) and len(v) > 120:
-                                blobs.append(v)
-                            walk(v)
-                    elif isinstance(obj, list):
-                        for v in obj:
-                            walk(v)
-
-                walk(data)
-                if blobs:
-                    blobs.sort(key=len, reverse=True)
-                    return title, blobs[0].strip()
-        except Exception:
-            pass
-
-        # 3) klassieke HTML containers
         for tag in soup.select("script, style, noscript, iframe"):
             tag.decompose()
 
@@ -570,14 +467,14 @@ def fetch_readable_text(url: str) -> Tuple[str, str]:
         if not containers and soup.body:
             containers = [soup.body]
 
-        paras = []
+        paras: List[str] = []
         for c in containers[:3]:
             for p in c.select("p, li"):
                 t = _clean_text(p.get_text(" ", strip=True))
                 if len(t) >= 40:
                     paras.append(t)
 
-        out = []
+        out: List[str] = []
         seen = set()
         for t in paras:
             key = t[:140]
@@ -587,37 +484,8 @@ def fetch_readable_text(url: str) -> Tuple[str, str]:
             out.append(t)
 
         return title, "\n\n".join(out).strip()
-
-    # Fetch 1
-    try:
-        r = requests.get(url, headers=HEADERS, timeout=18)
-        if not r.ok:
-            return "", ""
-        soup = BeautifulSoup(r.text or "", "lxml")
-        title, text = _extract_from_soup(soup)
-        if text and len(text) > 200:
-            return title, text
     except Exception:
-        pass
-
-    # Fetch 2: headers iets anders (helpt soms bij consent/edge)
-    try:
-        hdr = dict(HEADERS)
-        hdr.update({
-            "Cache-Control": "no-cache",
-            "Pragma": "no-cache",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        })
-        r2 = requests.get(url, headers=hdr, timeout=18)
-        if r2.ok:
-            soup2 = BeautifulSoup(r2.text or "", "lxml")
-            title2, text2 = _extract_from_soup(soup2)
-            if text2 and len(text2) > 200:
-                return title2, text2
-    except Exception:
-        pass
-
-    return "", ""
+        return "", ""
 
 def _meta(soup: BeautifulSoup, key: str) -> str:
     tag = soup.find("meta", attrs={"property": key}) or soup.find("meta", attrs={"name": key})
@@ -632,57 +500,9 @@ def fetch_article_media(url: str) -> Dict[str, str]:
         if not r.ok:
             return media
         soup = BeautifulSoup(r.text or "", "lxml")
-
-        # OG/Twitter
         media["image"] = _meta(soup, "og:image") or _meta(soup, "twitter:image")
-        media["video"] = (
-            _meta(soup, "og:video")
-            or _meta(soup, "og:video:url")
-            or _meta(soup, "twitter:player")
-        )
+        media["video"] = _meta(soup, "og:video") or _meta(soup, "og:video:url") or _meta(soup, "twitter:player")
         media["audio"] = _meta(soup, "og:audio") or _meta(soup, "og:audio:url")
-        media["poster"] = _meta(soup, "og:image") or _meta(soup, "twitter:image")
-
-        # JSON-LD (VideoObject)
-        for s in soup.find_all("script", attrs={"type": "application/ld+json"}):
-            try:
-                txt = (s.string or "").strip()
-                if not txt:
-                    continue
-                data = json.loads(txt)
-
-                def walk(obj):
-                    if isinstance(obj, dict):
-                        t = obj.get("@type")
-                        if isinstance(t, list):
-                            is_video = "VideoObject" in t
-                        else:
-                            is_video = (t == "VideoObject")
-
-                        if is_video:
-                            cu = obj.get("contentUrl") or ""
-                            eu = obj.get("embedUrl") or ""
-                            th = obj.get("thumbnailUrl") or ""
-                            if not media["video"] and cu:
-                                media["video"] = cu
-                            if (not media["video"]) and eu:
-                                media["video"] = eu
-                            if not media["poster"]:
-                                if isinstance(th, list) and th:
-                                    media["poster"] = th[0]
-                                elif isinstance(th, str):
-                                    media["poster"] = th
-
-                        for v in obj.values():
-                            walk(v)
-                    elif isinstance(obj, list):
-                        for v in obj:
-                            walk(v)
-
-                walk(data)
-            except Exception:
-                continue
-
     except Exception:
         return media
     return media
