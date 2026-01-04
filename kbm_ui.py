@@ -1,11 +1,42 @@
 import html
+import time
+import re
 import streamlit as st
 
-from common import CATEGORY_FEEDS, collect_items, within_hours, host, item_id, pretty_dt
+from common import CATEGORY_FEEDS, collect_items, within_hours, host, item_id, pretty_dt, fetch_arti
+def _media_image_for(link: str) -> str:
+    """Best-effort OG image fetch (cached) for sources that don't expose thumbs in RSS/listing."""
+    link = (link or "").strip()
+    if not link:
+        return ""
+    cache = st.session_state.setdefault("_kbm_media_cache", {})
+    now = time.time()
+    hit = cache.get(link)
+    if isinstance(hit, dict) and (now - float(hit.get("t", 0)) < 6 * 3600):
+        return (hit.get("img") or "").strip()
+
+    img = ""
+    try:
+        media = fetch_article_media(link) or {}
+        img = (media.get("image") or media.get("poster") or "").strip()
+    except Exception:
+        img = ""
+
+    cache[link] = {"t": now, "img": img}
+    return img
+
+cle_media
 
 
 def _pick_image(it: dict) -> str:
-    return (it.get("image") or it.get("img") or "").strip()
+    img = (it.get("image") or it.get("img") or "").strip()
+    if img:
+        return img
+    link = (it.get("link") or "").strip()
+    # Only do OG fetch for a limited set of domains to avoid unnecessary calls
+    if link and host(link) in ("rtl.nl", "news.google.com"):
+        return _media_image_for(link)
+    return ""
 
 
 def _pick_summary(it: dict) -> str:
@@ -76,6 +107,20 @@ html, body, [class*="css"], .stApp {
   text-transform: uppercase;
   color: #0f172a;
   padding: 18px 18px 12px 18px;
+}
+
+/* Kleine badge (bv VIDEO) */
+.kbm-badge{
+  display:inline-block;
+  margin-left: 8px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: .04em;
+  background: rgba(15,23,42,.92);
+  color: #fff;
+  vertical-align: middle;
 }
 
 /* ====== HERO ====== */
